@@ -1,0 +1,16 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+  "python.testing.pytestEnabled": true,
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestArgs": ["tests"],
+  "python.analysis.extraPaths": ["src", "third_party/usd2mjcf"],
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": { "source.organizeImports": "explicit" }
+  },
+  "files.associations": { "*.usda": "plaintext", "*.xml": "xml" },
+  "files.exclude": { "**/__pycache__": true, "**/.pytest_cache": true, "**/.ruff_cache": true },
+  "search.exclude": { "data/**": true, "outputs/**": true },
+  "editor.rulers": [100]
+}

@@ -1,0 +1,15 @@
+name: Feature or mapping improvement
+description: Propose a new feature or a better USD -> MJCF mapping
+labels: [enhancement]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What and why
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: How we'll know it works
+      description: Test, demo or metric that shows it's done

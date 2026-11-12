@@ -1,0 +1,21 @@
+# MuJoCo <option> presets. Pick one with `--sim-profile` or `sim_profile:` in a batch config.
+# Rationale for each setting is in docs/usd_to_mjcf_mapping.md (section: Simulation settings).
+
+default:
+  timestep: 0.002
+  integrator: implicitfast
+  cone: pyramidal
+  impratio: 1
+
+manipulation:          # grasping, pushing, contact-rich scenes
+  timestep: 0.002
+  integrator: implicitfast
+  cone: elliptic
+  impratio: 10
+  flags: { multiccd: enable }
+
+fast_preview:          # quick look only, not for physics checks
+  timestep: 0.005
+  integrator: implicitfast
+  cone: pyramidal
+  impratio: 1

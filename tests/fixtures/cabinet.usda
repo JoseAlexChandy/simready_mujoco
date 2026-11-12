@@ -1,0 +1,168 @@
+#usda 1.0
+(
+    defaultPrim = "cabinet"
+    kilogramsPerUnit = 1
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+def Xform "cabinet" (
+    prepend apiSchemas = ["PhysicsArticulationRootAPI"]
+)
+{
+    def "Looks"
+    {
+        def Material "wood_physics" (
+            prepend apiSchemas = ["PhysicsMaterialAPI"]
+        )
+        {
+            float physics:dynamicFriction = 0.6
+            float physics:restitution = 0.2
+            float physics:staticFriction = 0.8
+        }
+    }
+
+    def Xform "base" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+    )
+    {
+        float physics:mass = 2
+        double3 xformOp:translate = (0, 0, 0.4)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+
+        def Mesh "base_visual"
+        {
+            float3[] extent = [(-0.2, -0.2, -0.4), (0.2, 0.2, 0.4)]
+            int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+            int[] faceVertexIndices = [0, 3, 2, 1, 4, 5, 6, 7, 0, 1, 5, 4, 1, 2, 6, 5, 2, 3, 7, 6, 3, 0, 4, 7]
+            point3f[] points = [(-0.2, -0.2, -0.4), (0.2, -0.2, -0.4), (0.2, 0.2, -0.4), (-0.2, 0.2, -0.4), (-0.2, -0.2, 0.4), (0.2, -0.2, 0.4), (0.2, 0.2, 0.4), (-0.2, 0.2, 0.4)]
+            double3 xformOp:translate = (0, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def Mesh "base_collision" (
+            prepend apiSchemas = ["PhysicsCollisionAPI", "PhysicsMeshCollisionAPI", "MaterialBindingAPI"]
+        )
+        {
+            float3[] extent = [(-0.2, -0.2, -0.4), (0.2, 0.2, 0.4)]
+            int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+            int[] faceVertexIndices = [0, 3, 2, 1, 4, 5, 6, 7, 0, 1, 5, 4, 1, 2, 6, 5, 2, 3, 7, 6, 3, 0, 4, 7]
+            rel material:binding:physics = </cabinet/Looks/wood_physics> (
+                bindMaterialAs = "weakerThanDescendants"
+            )
+            uniform token physics:approximation = "convexHull"
+            point3f[] points = [(-0.2, -0.2, -0.4), (0.2, -0.2, -0.4), (0.2, 0.2, -0.4), (-0.2, 0.2, -0.4), (-0.2, -0.2, 0.4), (0.2, -0.2, 0.4), (0.2, 0.2, 0.4), (-0.2, 0.2, 0.4)]
+            uniform token purpose = "guide"
+            double3 xformOp:translate = (0, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+    }
+
+    def Xform "door" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+    )
+    {
+        double3 xformOp:translate = (0.21, 0, 0.4)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+
+        def Mesh "door_visual"
+        {
+            float3[] extent = [(-0.01, -0.2, -0.3), (0.01, 0.2, 0.3)]
+            int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+            int[] faceVertexIndices = [0, 3, 2, 1, 4, 5, 6, 7, 0, 1, 5, 4, 1, 2, 6, 5, 2, 3, 7, 6, 3, 0, 4, 7]
+            point3f[] points = [(-0.01, -0.2, -0.3), (0.01, -0.2, -0.3), (0.01, 0.2, -0.3), (-0.01, 0.2, -0.3), (-0.01, -0.2, 0.3), (0.01, -0.2, 0.3), (0.01, 0.2, 0.3), (-0.01, 0.2, 0.3)]
+            double3 xformOp:translate = (0, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def Mesh "door_collision" (
+            prepend apiSchemas = ["PhysicsCollisionAPI", "PhysicsMeshCollisionAPI", "MaterialBindingAPI"]
+        )
+        {
+            float3[] extent = [(-0.01, -0.2, -0.3), (0.01, 0.2, 0.3)]
+            int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+            int[] faceVertexIndices = [0, 3, 2, 1, 4, 5, 6, 7, 0, 1, 5, 4, 1, 2, 6, 5, 2, 3, 7, 6, 3, 0, 4, 7]
+            rel material:binding:physics = </cabinet/Looks/wood_physics> (
+                bindMaterialAs = "weakerThanDescendants"
+            )
+            uniform token physics:approximation = "convexHull"
+            point3f[] points = [(-0.01, -0.2, -0.3), (0.01, -0.2, -0.3), (0.01, 0.2, -0.3), (-0.01, 0.2, -0.3), (-0.01, -0.2, 0.3), (0.01, -0.2, 0.3), (0.01, 0.2, 0.3), (-0.01, 0.2, 0.3)]
+            uniform token purpose = "guide"
+            double3 xformOp:translate = (0, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+    }
+
+    def Xform "drawer" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+    )
+    {
+        double3 xformOp:translate = (0, 0, 0.1)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+
+        def Mesh "drawer_visual"
+        {
+            float3[] extent = [(-0.18, -0.18, -0.075), (0.18, 0.18, 0.075)]
+            int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+            int[] faceVertexIndices = [0, 3, 2, 1, 4, 5, 6, 7, 0, 1, 5, 4, 1, 2, 6, 5, 2, 3, 7, 6, 3, 0, 4, 7]
+            point3f[] points = [(-0.18, -0.18, -0.075), (0.18, -0.18, -0.075), (0.18, 0.18, -0.075), (-0.18, 0.18, -0.075), (-0.18, -0.18, 0.075), (0.18, -0.18, 0.075), (0.18, 0.18, 0.075), (-0.18, 0.18, 0.075)]
+            double3 xformOp:translate = (0, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def Mesh "drawer_collision" (
+            prepend apiSchemas = ["PhysicsCollisionAPI", "PhysicsMeshCollisionAPI", "MaterialBindingAPI"]
+        )
+        {
+            float3[] extent = [(-0.18, -0.18, -0.075), (0.18, 0.18, 0.075)]
+            int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+            int[] faceVertexIndices = [0, 3, 2, 1, 4, 5, 6, 7, 0, 1, 5, 4, 1, 2, 6, 5, 2, 3, 7, 6, 3, 0, 4, 7]
+            rel material:binding:physics = </cabinet/Looks/wood_physics> (
+                bindMaterialAs = "weakerThanDescendants"
+            )
+            uniform token physics:approximation = "convexHull"
+            point3f[] points = [(-0.18, -0.18, -0.075), (0.18, -0.18, -0.075), (0.18, 0.18, -0.075), (-0.18, 0.18, -0.075), (-0.18, -0.18, 0.075), (0.18, -0.18, 0.075), (0.18, 0.18, 0.075), (-0.18, 0.18, 0.075)]
+            uniform token purpose = "guide"
+            double3 xformOp:translate = (0, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+    }
+
+    def "joints"
+    {
+        def PhysicsFixedJoint "base_fixed"
+        {
+            rel physics:body1 = </cabinet/base>
+        }
+
+        def PhysicsRevoluteJoint "door_hinge" (
+            prepend apiSchemas = ["PhysicsDriveAPI:angular"]
+        )
+        {
+            float drive:angular:physics:damping = 0.5
+            float drive:angular:physics:maxForce = 20
+            float drive:angular:physics:stiffness = 5
+            float drive:angular:physics:targetPosition = 45
+            uniform token drive:angular:physics:type = "force"
+            uniform token physics:axis = "Z"
+            rel physics:body0 = </cabinet/base>
+            rel physics:body1 = </cabinet/door>
+            point3f physics:localPos0 = (0.21, 0.2, 0)
+            point3f physics:localPos1 = (0, 0.2, 0)
+            float physics:lowerLimit = 0
+            float physics:upperLimit = 90
+        }
+
+        def PhysicsPrismaticJoint "drawer_slide"
+        {
+            uniform token physics:axis = "X"
+            rel physics:body0 = </cabinet/base>
+            rel physics:body1 = </cabinet/drawer>
+            point3f physics:localPos0 = (0, 0, -0.3)
+            point3f physics:localPos1 = (0, 0, 0)
+            float physics:lowerLimit = 0
+            float physics:upperLimit = 0.3
+        }
+    }
+}
+

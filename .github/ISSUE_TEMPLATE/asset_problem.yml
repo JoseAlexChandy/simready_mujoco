@@ -1,0 +1,32 @@
+name: Asset doesn't convert or behaves wrongly
+description: A SimReady asset fails to convert, or looks/moves wrong in MuJoCo
+labels: [asset]
+body:
+  - type: input
+    id: asset
+    attributes:
+      label: Asset
+      description: HF repo + file path + revision, or local path
+    validations:
+      required: true
+  - type: dropdown
+    id: symptom
+    attributes:
+      label: What goes wrong
+      options:
+        - Conversion crashes
+        - Wrong mass / falls oddly
+        - Slides or bounces wrongly (friction / restitution)
+        - Joint missing, wrong axis or wrong limits
+        - Can't be driven / actuator wrong
+        - Collision wrong (passes through, jitters)
+        - Looks wrong (materials, scale, orientation)
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: Paste the output of `srmj inspect <file>` and any error message.
+      render: text

@@ -1,0 +1,9 @@
+simready-mujoco
+Copyright 2026 Jose Alex Chandy
+
+This project includes, as a git submodule, usd2mjcf by LightwheelAI
+(https://github.com/LightwheelAI/usd2mjcf), licensed under the Apache License 2.0,
+which is itself based on NVIDIA's nvidia-srl-usd-to-urdf package.
+
+SimReady assets are not distributed with this project. Each asset carries its own
+licence, set by its publisher on Hugging Face.

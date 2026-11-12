@@ -1,0 +1,53 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "simready-mujoco"
+version = "0.1.0"
+description = "Convert NVIDIA SimReady (OpenUSD) assets to MuJoCo MJCF with their physics intact, and demo them."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+authors = [{ name = "Jose Alex Chandy" }]
+dependencies = [
+    "usd-core>=25.5",
+    "mujoco>=3.3",
+    "numpy",
+    "scipy",
+    "trimesh",
+    "pyyaml",
+    "typer>=0.12",
+    "rich>=13",
+]
+
+[project.optional-dependencies]
+# Convex decomposition for collision meshes (heavier install)
+decomp = ["coacd"]
+# Downloading assets from Hugging Face
+hf = ["huggingface_hub>=0.24"]
+dev = ["pytest>=8", "pytest-cov", "ruff>=0.6", "pre-commit"]
+all = ["simready-mujoco[decomp,hf,dev]"]
+
+[project.scripts]
+srmj = "simready_mujoco.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/simready_mujoco"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning:pxr.*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["third_party"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]  # line length is handled by `ruff format`
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["typer.Argument", "typer.Option"]

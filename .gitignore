@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Data: never commit downloaded assets or conversion output
+data/*
+!data/README.md
+outputs/
+*.usd
+*.usda
+*.usdc
+*.usdz
+!tests/fixtures/**/*.usda
+
+# Media from demos
+*.mp4
+*.gif
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json

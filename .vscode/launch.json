@@ -1,0 +1,49 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "srmj: inspect USD file",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "simready_mujoco.cli",
+      "args": ["inspect", "${input:usdPath}"],
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "srmj: convert USD file",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "simready_mujoco.cli",
+      "args": ["convert", "${input:usdPath}", "--out", "outputs"],
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "srmj: convert subset",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "simready_mujoco.cli",
+      "args": ["batch", "configs/subset.yaml"],
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "srmj: view MJCF in MuJoCo",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "simready_mujoco.cli",
+      "args": ["view", "${input:mjcfPath}"],
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "pytest: current file",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": ["${file}", "-v"],
+      "console": "integratedTerminal"
+    }
+  ],
+  "inputs": [
+    { "id": "usdPath", "type": "promptString", "description": "Path to a .usd/.usda/.usdc/.usdz file" },
+    { "id": "mjcfPath", "type": "promptString", "description": "Path to an MJCF .xml file" }
+  ]
+}

@@ -1,0 +1,35 @@
+# Pilot subset: a few assets chosen so that together they exercise every USD -> MJCF mapping.
+# Add assets by giving either a local `path` or a Hugging Face `hf` source.
+# Fill in the real assets once we've browsed SimReady Central.
+#
+# Fields:
+#   id:        short unique name, used for the output folder
+#   category:  rigid | articulated | robot | gripper
+#   exercises: which mappings this asset is meant to test (see docs/usd_to_mjcf_mapping.md)
+#   path:      local USD file (relative to repo root), OR
+#   hf:        { repo: <org>/<dataset>, file: <path inside repo>, revision: <commit> }
+
+output_dir: outputs
+sim_profile: manipulation   # see src/simready_mujoco/sim_profiles.yaml
+generate_collision: true
+
+assets:
+  - id: example_cabinet
+    category: articulated
+    exercises: [mass, materials, revolute, drives]
+    path: tests/fixtures/cabinet.usda   # synthetic test asset, always available
+
+  # --- TODO: replace with real SimReady Central assets ---
+  # - id: box_cardboard
+  #   category: rigid
+  #   exercises: [mass, materials, collision_primitives]
+  #   hf: { repo: <org>/<dataset>, file: <path/to/asset.usd>, revision: <commit> }
+  # - id: drawer_unit
+  #   category: articulated
+  #   exercises: [prismatic, limits]
+  # - id: robot_arm
+  #   category: robot
+  #   exercises: [drives, inertia, self_collision]
+  # - id: parallel_gripper
+  #   category: gripper
+  #   exercises: [mimic, closed_loop]
