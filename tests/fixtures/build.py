@@ -287,3 +287,68 @@ def build_mimic_gripper(path: Path) -> Path:
     nj.GetPrim().CreateAttribute("newton:mimicCoef1", Sdf.ValueTypeNames.Float).Set(-1.0)
     stage.GetRootLayer().Save()
     return path
+
+
+def build_hollow_cabinet(path: Path) -> Path:
+    """Open-front cabinet carcass (ONE concave collision mesh, like SimReady fridges), a door
+    hinged to it, and a compartment hinged to the door that sits inside the cavity.
+    With convex-hull collision the carcass becomes a solid block that overlaps the compartment
+    and blows the door open; convex decomposition keeps the cavity hollow."""
+    import numpy as np
+    import trimesh as tm
+
+    stage = Usd.Stage.CreateNew(str(path))
+    UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+    root = UsdGeom.Xform.Define(stage, "/hollow").GetPrim()
+    stage.SetDefaultPrim(root)
+
+    W, D, H, t = 0.6, 0.5, 0.8, 0.02  # outer size, wall thickness; open at -y (front)
+    panels = [
+        tm.creation.box((W, D, t), tm.transformations.translation_matrix((0, 0, -H / 2 + t / 2))),
+        tm.creation.box((W, D, t), tm.transformations.translation_matrix((0, 0, H / 2 - t / 2))),
+        tm.creation.box((t, D, H), tm.transformations.translation_matrix((-W / 2 + t / 2, 0, 0))),
+        tm.creation.box((t, D, H), tm.transformations.translation_matrix((W / 2 - t / 2, 0, 0))),
+        tm.creation.box((W, t, H), tm.transformations.translation_matrix((0, D / 2 - t / 2, 0))),
+    ]
+    carcass_mesh = tm.util.concatenate(panels)
+
+    def rigid(name, pos, mass):
+        x = UsdGeom.Xform.Define(stage, f"/hollow/{name}")
+        UsdGeom.XformCommonAPI(x).SetTranslate(Gf.Vec3d(*pos))
+        UsdPhysics.RigidBodyAPI.Apply(x.GetPrim())
+        UsdPhysics.MassAPI.Apply(x.GetPrim()).CreateMassAttr(mass)
+        return x.GetPrim()
+
+    carcass = rigid("carcass", (0, 0, H / 2), 20.0)
+    m = UsdGeom.Mesh.Define(stage, "/hollow/carcass/carcass_col")
+    m.CreatePointsAttr([Gf.Vec3f(*map(float, v)) for v in carcass_mesh.vertices])
+    m.CreateFaceVertexCountsAttr([3] * len(carcass_mesh.faces))
+    m.CreateFaceVertexIndicesAttr([int(i) for f in carcass_mesh.faces for i in f])
+    _collider(m.GetPrim(), "convexHull")
+
+    door = rigid("door", (0, -D / 2 - 0.011, H / 2), 3.0)
+    dc = _box_mesh(stage, "/hollow/door/door_col", (W, 0.02, H), (0, 0, 0))
+    _collider(dc.GetPrim())
+    # compartment hanging off the door, inside the cavity (clear of the walls)
+    comp = rigid("compartment", (0, -D / 2 + 0.08, H / 2), 0.5)
+    cc = _box_mesh(stage, "/hollow/compartment/comp_col", (0.4, 0.1, 0.1), (0, 0, 0))
+    _collider(cc.GetPrim())
+
+    fj = UsdPhysics.FixedJoint.Define(stage, "/hollow/joints/carcass_fixed")
+    fj.CreateBody1Rel().SetTargets([carcass.GetPath()])
+    hinge = UsdPhysics.RevoluteJoint.Define(stage, "/hollow/joints/door_hinge")
+    hinge.CreateBody0Rel().SetTargets([carcass.GetPath()])
+    hinge.CreateBody1Rel().SetTargets([door.GetPath()])
+    hinge.CreateAxisAttr("Z")
+    hinge.CreateLocalPos0Attr(Gf.Vec3f(-W / 2, -D / 2 - 0.011, 0))
+    hinge.CreateLocalPos1Attr(Gf.Vec3f(-W / 2, 0, 0))
+    hinge.CreateLowerLimitAttr(-150.0)
+    hinge.CreateUpperLimitAttr(0.0)
+    cj = UsdPhysics.FixedJoint.Define(stage, "/hollow/joints/compartment_on_door")
+    cj.CreateBody0Rel().SetTargets([door.GetPath()])
+    cj.CreateBody1Rel().SetTargets([comp.GetPath()])
+    cj.CreateLocalPos0Attr(Gf.Vec3f(0, 0.091, 0))
+    stage.GetRootLayer().Save()
+    assert np  # numpy used by trimesh transforms
+    return path

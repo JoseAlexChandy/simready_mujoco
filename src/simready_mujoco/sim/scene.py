@@ -260,9 +260,11 @@ def settle_check(m: mujoco.MjModel, items: list[Item], seconds: float) -> list[d
     roots = {}
     for b in range(1, m.nbody):
         name = m.body(b).name
-        if m.body_parentid[b] == 0 and m.body_jntnum[b] and int(
-            m.jnt_type[m.body_jntadr[b]]
-        ) == int(mujoco.mjtJoint.mjJNT_FREE):
+        if (
+            m.body_parentid[b] == 0
+            and m.body_jntnum[b]
+            and int(m.jnt_type[m.body_jntadr[b]]) == int(mujoco.mjtJoint.mjJNT_FREE)
+        ):
             roots[name] = (b, d.xpos[b].copy())
     for _ in range(int(seconds / m.opt.timestep)):
         mujoco.mj_step(m, d)

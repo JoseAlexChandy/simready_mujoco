@@ -16,6 +16,7 @@ Legend: ✅ done (native backend) · 🔲 planned
 | Loop closures | `excludeFromArticulation` / cycles | `<equality><connect>` / `<weld>` | ✅ |
 | Mass / CoM / inertia | `MassAPI`, collider density, defaults | `<inertial>` via `ComputeMassProperties` | ✅ |
 | Collision | authored colliders (primitives + meshes) | geoms in `collision` class | ✅ |
+| Concave colliders | mesh collider whose convex hull would overlap other parts | convex parts via CoACD (`--decompose auto`) | ✅ |
 | Collision filtering | joint `collisionEnabled=false`, `FilteredPairsAPI` | `<contact><exclude>` | ✅ |
 | Visuals | renderable gprims | geoms in `visual` class, material base colour | ✅ (no textures yet) |
 | Physics materials | `PhysicsMaterialAPI` (+ `MjcMaterialAPI`) | geom `friction` | ✅ (restitution 🔲) |

@@ -20,6 +20,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [SemVer](ht
 - ADR 0003 (native backend semantics); docs/validation.md.
 
 ### Fixed (found on real SimReady assets)
+- SimReady refrigerator's doors were blown open: under the MuJoCo variant its hollow carcass is a single `convexHull` collider, so MuJoCo treats it as a solid block that overlaps the compartments inside (106 mm). New `--decompose auto|concave|all|off` (default `auto`): concave colliders whose hull overlaps another part at the authored pose are split into convex parts with CoACD (cached in `~/.cache/simready-mujoco`).
 - SimReady FR3 fell under gravity: its `MjcActuator`s have no position feedback (gains 0.003), while its UsdPhysics drives carry Menagerie's gains. New `--actuators auto|mjc|drive` (default `auto`) uses the drive in that case and warns. See docs/validation.md.
 - Meshes over 200k faces are written as OBJ (MuJoCo's STL reader limit; refrigerator_a01).
 - Mesh assets use `inertia="shell"` so open visual meshes load (FR3 link 5); masses always come from explicit inertials.

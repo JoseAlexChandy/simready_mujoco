@@ -26,6 +26,7 @@ def convert(
     variants: dict[str, str] | None = None,
     quiet: bool = True,
     actuators: str = "auto",
+    decompose: str = "auto",
 ) -> Path:
     """Convert one USD asset to MJCF and return the MJCF file path.
 
@@ -41,6 +42,9 @@ def convert(
         actuators: native backend: "auto" (MuJoCo layer, unless an MjcActuator can't hold a
             position but a position drive exists), "mjc" (MuJoCo layer wins), "drive"
             (UsdPhysics drives win)
+        decompose: native backend: "auto" splits concave collision meshes into convex parts
+            (CoACD) only when their hull overlaps another part at the authored pose (hollow
+            carcasses with things inside); "concave", "all" or "off"
     """
     usd_file, out_dir = Path(usd_file), Path(out_dir)
     if not usd_file.exists():
@@ -50,7 +54,23 @@ def convert(
         from simready_mujoco.native import parse_stage, write_mjcf  # noqa: PLC0415
 
         stage, _ = open_stage(usd_file, runtime=runtime, variants=variants)
-        model = parse_stage(stage, name=usd_file.stem, actuators=actuators)
+        if decompose == "auto":
+            # Pass 1 without decomposition; find concave hulls that overlap other parts.
+            model = parse_stage(stage, name=usd_file.stem, actuators=actuators)
+            write_mjcf(model, out_dir)
+            overlapping = _overlapping_meshes(out_dir / f"{usd_file.stem}.xml", model)
+            if overlapping:
+                model = parse_stage(
+                    stage,
+                    name=usd_file.stem,
+                    actuators=actuators,
+                    decompose="concave",
+                    decompose_only=overlapping,
+                )
+                model.notes["overlapping_colliders"] = sorted(overlapping)
+                _clear_meshes(out_dir)
+        else:
+            model = parse_stage(stage, name=usd_file.stem, actuators=actuators, decompose=decompose)
         if generate_collision:
             model.notes["collision_flag"] = "ignored: native backend uses authored colliders"
         mjcf = write_mjcf(model, out_dir)
@@ -95,3 +115,31 @@ def _write_report(model, out_dir: Path) -> None:
 
     report = {"model": model.name, **model.notes, "warnings": model.warnings}
     (out_dir / "conversion_report.json").write_text(json.dumps(report, indent=2, default=str))
+
+
+def _overlapping_meshes(mjcf: Path, model) -> set[str]:
+    """Mesh names of collision geoms that penetrate another body's collider at the authored
+    pose (more than decompose.OVERLAP). Those are candidates for convex decomposition."""
+    import mujoco  # noqa: PLC0415
+
+    from simready_mujoco.native.decompose import OVERLAP  # noqa: PLC0415
+
+    m = mujoco.MjModel.from_xml_path(str(mjcf))
+    d = mujoco.MjData(m)
+    mujoco.mj_forward(m, d)
+    geom_mesh = {g.name: g.mesh for b in model.bodies for g in b.geoms if g.collision and g.mesh}
+    hits: set[str] = set()
+    for c in d.contact[: d.ncon]:
+        if c.dist < -OVERLAP:
+            for gid in (c.geom1, c.geom2):
+                mesh = geom_mesh.get(m.geom(gid).name)
+                if mesh:
+                    hits.add(mesh)
+    return hits
+
+
+def _clear_meshes(out_dir: Path) -> None:
+    mesh_dir = out_dir / "meshes"
+    if mesh_dir.is_dir():
+        for f in mesh_dir.iterdir():
+            f.unlink()

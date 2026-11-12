@@ -55,3 +55,12 @@ drive, and logs a warning. Worth reporting upstream to Franka/NVIDIA.
 Other differences vs Menagerie are genuine model differences, not conversion errors: link
 masses (total 15.93 vs 18.32 kg, SimReady has no separate base body), joint frictionloss 0.2
 on all joints, joint damping not authored for MuJoCo.
+
+### Refrigerator (`nvidia/simready-assets` @ 653d91e1, `refrigerator_a01`)
+
+Under the MuJoCo variant every collider is `convexHull`. The carcass is one hollow mesh, so its
+hull is a solid block that starts 106 mm into the two door compartments (`locker_01/02`);
+MuJoCo pushes them out and both doors swing open (97° and −102° within 2 s). PhysX avoided this
+with SDF colliders. `--decompose auto` finds concave colliders that overlap other parts at the
+authored pose and splits them into convex parts (CoACD); reproduced and fixed on the synthetic
+`build_hollow_cabinet` fixture (door 63° open → 0°).

@@ -249,6 +249,9 @@ class _Ctx:
     joint_ref: dict[str, float] = field(default_factory=dict)
     mass_shapes: dict[str, trimesh.Trimesh] = field(default_factory=dict)  # collider -> body frame
     mesh_keys: dict[tuple, str] = field(default_factory=dict)
+    decompose: str = "off"
+    decompose_only: set[str] | None = None  # mesh names to consider (None = all)
+    decomposed: dict[str, list[str]] = field(default_factory=dict)  # mesh -> convex part meshes
 
     def world(self, prim: Usd.Prim) -> Gf.Matrix4d:
         return self.xcache.GetLocalToWorldTransform(prim)
@@ -257,12 +260,25 @@ class _Ctx:
 # ----------------------------------------------------------------------------- main entry
 
 
-def parse_stage(stage: Usd.Stage, name: str = "model", actuators: str = "auto") -> Model:
+def parse_stage(
+    stage: Usd.Stage,
+    name: str = "model",
+    actuators: str = "auto",
+    decompose: str = "off",
+    decompose_only: set[str] | None = None,
+) -> Model:
+    """decompose: "concave" splits concave collision meshes into convex parts (CoACD), "all"
+    splits every collision mesh, "off" keeps one convex hull per mesh. decompose_only limits
+    it to those mesh names. ("auto" is resolved by the caller: see api.convert.)"""
+    if decompose not in ("concave", "all", "off"):
+        raise ValueError("parse_stage decompose must be concave | all | off")
     ctx = _Ctx(
         stage=stage,
         mpu=float(UsdGeom.GetStageMetersPerUnit(stage)),
         kpu=float(UsdPhysics.GetStageKilogramsPerUnit(stage)),
         xcache=UsdGeom.XformCache(),
+        decompose=decompose,
+        decompose_only=decompose_only,
     )
     ctx.model = Model(name=name)
     parsed = parse_physics(stage)
@@ -290,6 +306,7 @@ def parse_stage(stage: Usd.Stage, name: str = "model", actuators: str = "auto") 
         tendons=len(m.tendons),
         contact_excludes=len(m.excludes),
         meshes=len(m.meshes),
+        decomposed_meshes={k: len(v) for k, v in ctx.decomposed.items() if v},
         inertial_sources={
             s: sum(b.inertial is not None and b.inertial.source == s for b in m.bodies)
             for s in ("authored", "computed", "default")
@@ -630,11 +647,72 @@ def _collect_colliders(ctx: _Ctx, parsed, bodies: list[str]) -> dict[str, str]:
             mats = [str(m) for m in getattr(desc, "materials", []) or [] if str(m)]
             if mats and mats[0] in materials:
                 g.friction = _friction(ctx, mats[0], materials[mats[0]])
+            geoms = [g]
+            if g.shape == ShapeType.MESH and ctx.decompose != "off":
+                parts = _convex_parts(ctx, g.mesh)
+                if parts:
+                    geoms, tm = _part_geoms(ctx, g, parts)
             if tm is not None and tm.volume > 1e-12:
                 ctx.mass_shapes[path] = tm
-            _attach(ctx, owner, g)
+            for geom in geoms:
+                _attach(ctx, owner, geom)
             owners[path] = owner
     return owners
+
+
+def _convex_parts(ctx: _Ctx, mesh_name: str) -> list[str]:
+    """Names of convex part meshes for a concave collision mesh ([] = keep the hull)."""
+    from simready_mujoco.native.decompose import decompose, is_concave
+
+    if mesh_name in ctx.decomposed:
+        return ctx.decomposed[mesh_name]
+    if ctx.decompose_only is not None and mesh_name not in ctx.decompose_only:
+        ctx.decomposed[mesh_name] = []
+        return []
+    md = ctx.model.meshes[mesh_name]
+    names: list[str] = []
+    if ctx.decompose == "all" or is_concave(md.vertices, md.faces):
+        try:
+            parts = decompose(md.vertices, md.faces)
+        except ImportError:
+            ctx.model.warnings.append(
+                f"{mesh_name}: concave collider kept as a solid hull (install coacd: pip install coacd)"
+            )
+            parts = []
+        for i, (pv, pf) in enumerate(parts):
+            pname = ctx.names("mesh", f"{mesh_name}_cvx{i}")
+            ctx.model.meshes[pname] = MeshData(pname, pv.astype(np.float32), pf.astype(np.int32))
+            names.append(pname)
+    ctx.decomposed[mesh_name] = names
+    return names
+
+
+def _part_geoms(ctx: _Ctx, g: Geom, parts: list[str]) -> tuple[list[Geom], trimesh.Trimesh | None]:
+    """One geom per convex part (same pose/material as the original), plus their combined
+    shape in the body frame for mass computation."""
+    T = np.eye(4)
+    T[:3, :3] = trimesh.transformations.quaternion_matrix(g.pose.quat)[:3, :3]
+    T[:3, 3] = g.pose.pos
+    geoms, hulls = [], []
+    for i, pname in enumerate(parts):
+        pg = Geom(
+            name=ctx.names("geom", f"{g.name}_cvx{i}"),
+            shape=ShapeType.MESH,
+            pose=g.pose,
+            mesh=pname,
+            collision=True,
+            rgba=g.rgba,
+            friction=g.friction,
+            extra=dict(g.extra),
+            source_path=g.source_path,
+        )
+        geoms.append(pg)
+        md = ctx.model.meshes[pname]
+        hull = trimesh.Trimesh(md.vertices.astype(np.float64), md.faces, process=False).convex_hull
+        hull.apply_transform(T)
+        hulls.append(hull)
+    combined = trimesh.util.concatenate(hulls) if hulls else None
+    return geoms, combined
 
 
 def _friction(ctx: _Ctx, mat_path: str, desc) -> tuple[float, ...]:

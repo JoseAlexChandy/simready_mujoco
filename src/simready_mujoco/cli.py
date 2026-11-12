@@ -188,6 +188,11 @@ def convert(
         "--actuators",
         help="Actuator source: auto | mjc (MuJoCo layer) | drive (UsdPhysics)",
     ),
+    decompose: str = typer.Option(
+        "auto",
+        "--decompose",
+        help="Convex decomposition: auto (concave + overlapping) | concave | all | off",
+    ),
 ) -> None:
     """Convert one USD asset to MJCF and check it loads in MuJoCo."""
     from simready_mujoco.api import convert as _convert
@@ -206,6 +211,7 @@ def convert(
         variants=parse_variant_args(variant),
         quiet=not verbose,
         actuators=actuators,
+        decompose=decompose,
     )
     s = summarize_mjcf(mjcf)
     console.print(f"[green]✓[/] {mjcf}")
@@ -276,6 +282,7 @@ def batch(
                 variants=vs,
                 quiet=not verbose,
                 actuators=entry.get("actuators", cfg.get("actuators", "auto")),
+                decompose=entry.get("decompose", cfg.get("decompose", "auto")),
             )
             row["stage"] = "load"
             row.update(summarize_mjcf(mjcf).to_dict(), ok=True, stage="done")
@@ -435,7 +442,9 @@ def scene(
             missing.append(aid)
             continue
         items.append(
-            Item(aid, str(xmls[0]), place.get(aid, "auto"), entry.get("category"), yaw.get(aid, 0.0))
+            Item(
+                aid, str(xmls[0]), place.get(aid, "auto"), entry.get("category"), yaw.get(aid, 0.0)
+            )
         )
     if missing:
         console.print(f"[yellow]Not converted yet (run srmj batch): {', '.join(missing)}[/]")
@@ -443,7 +452,9 @@ def scene(
     table = TableSpec(**(cfg.get("table") or {}))
     with console.status("Building scene and letting it settle …"):
         rep = build_scene(items, out_file, table, cfg.get("sim_profile", "manipulation"))
-    (out_file.parent / "scene_report.json").write_text(json.dumps(dataclasses_asdict(rep), indent=2))
+    (out_file.parent / "scene_report.json").write_text(
+        json.dumps(dataclasses_asdict(rep), indent=2)
+    )
 
     t = Table(title=f"Scene: {out_file}")
     for c in ("Asset", "Placed on", "Position (x y z)", "Size (x y z) m"):
