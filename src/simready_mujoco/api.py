@@ -19,7 +19,7 @@ def convert(
     *,
     sim_profile: str | None = "manipulation",
     generate_collision: bool = False,
-    backend: str = "upstream",
+    backend: str = "native",
     preprocess_resolution: int = 20,
     resolution: int = 2000,
     runtime: str = "mujoco",
@@ -33,7 +33,7 @@ def convert(
         out_dir: folder to write the MJCF and meshes into
         sim_profile: name of a preset in sim_profiles.yaml, or None to keep backend defaults
         generate_collision: build convex collision meshes with CoACD
-        backend: "upstream" (LightwheelAI/usd2mjcf). Our own backend will be added as "native".
+        backend: "native" (this project, default) or "upstream" (LightwheelAI/usd2mjcf baseline)
         runtime: physics variant to compose: "mujoco" (default), "physx", "newton", "authored"
         variants: extra {variant set: option} selections, e.g. {"Physics": "Newton_parallel_grip"}
         quiet: send third-party log output to <out_dir>/convert.log instead of the terminal
@@ -42,7 +42,15 @@ def convert(
     if not usd_file.exists():
         raise FileNotFoundError(usd_file)
 
-    if backend == "upstream":
+    if backend == "native":
+        from simready_mujoco.native import parse_stage, write_mjcf  # noqa: PLC0415
+
+        stage, _ = open_stage(usd_file, runtime=runtime, variants=variants)
+        model = parse_stage(stage, name=usd_file.stem)
+        if generate_collision:
+            model.notes["collision_flag"] = "ignored: native backend uses authored colliders"
+        mjcf = write_mjcf(model, out_dir)
+    elif backend == "upstream":
         from simready_mujoco.backends import upstream  # noqa: PLC0415
 
         stage, _ = open_stage(usd_file, runtime=runtime, variants=variants)
@@ -56,8 +64,30 @@ def convert(
                 stage=stage,
             )
     else:
-        raise ValueError(f"Unknown backend '{backend}'. Available: upstream")
+        raise ValueError(f"Unknown backend '{backend}'. Available: native, upstream")
 
     if sim_profile:
-        apply_profile(mjcf, get_profile(sim_profile))
+        authored = set(model.option) | set(model.flags) if backend == "native" else set()
+        kept = apply_profile(mjcf, get_profile(sim_profile), keep=authored)
+        if backend == "native" and kept:
+            model.notes["asset_options_kept"] = kept
+    if backend == "native":
+        from simready_mujoco.sim.stability import check_drive_stability  # noqa: PLC0415
+
+        stiff = check_drive_stability(mjcf)
+        for s in stiff:
+            model.warnings.append(
+                f"actuator {s.actuator}: drive too stiff for timestep (omega*dt = {s.omega_dt:.2f}); "
+                f"add armature >= {s.armature_needed:.3g} on {s.joint}, or lower the timestep"
+            )
+        model.notes["stiff_drives"] = [s.to_dict() for s in stiff]
+        _write_report(model, out_dir)
     return mjcf
+
+
+def _write_report(model, out_dir: Path) -> None:
+    """conversion_report.json: what was converted and every warning."""
+    import json  # noqa: PLC0415
+
+    report = {"model": model.name, **model.notes, "warnings": model.warnings}
+    (out_dir / "conversion_report.json").write_text(json.dumps(report, indent=2, default=str))

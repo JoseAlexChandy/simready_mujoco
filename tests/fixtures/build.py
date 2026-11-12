@@ -157,6 +157,13 @@ def build_runtime_variant_asset(asset_dir: Path) -> Path:
         for path, type_name in extra_prims.items():
             p = s.DefinePrim(path, type_name)
             p.CreateAttribute("mjc:gainPrm", Sdf.ValueTypeNames.DoubleArray).Set([100.0])
+            p.CreateAttribute("mjc:biasType", Sdf.ValueTypeNames.Token).Set("affine")
+            p.CreateAttribute("mjc:biasPrm", Sdf.ValueTypeNames.DoubleArray).Set(
+                [0.0, -100.0, -10.0]
+            )
+            p.CreateAttribute("mjc:forceRange:min", Sdf.ValueTypeNames.Double).Set(-5.0)
+            p.CreateAttribute("mjc:forceRange:max", Sdf.ValueTypeNames.Double).Set(5.0)
+            p.CreateRelationship("mjc:target").SetTargets([Sdf.Path("/prop/lid_hinge")])
         s.SetDefaultPrim(s.GetPrimAtPath("/prop"))
         layer.Save()
 
@@ -180,9 +187,18 @@ def build_runtime_variant_asset(asset_dir: Path) -> Path:
     _box_mesh(stage, "/prop/body/body_visual", (0.1, 0.1, 0.1), (0, 0, 0))
     c = _box_mesh(stage, "/prop/body/body_collision", (0.1, 0.1, 0.1), (0, 0, 0))
     _collider(c.GetPrim(), "sdf")
-    lid = UsdGeom.Xform.Define(stage, "/prop/lid").GetPrim()
+    lid_x = UsdGeom.Xform.Define(stage, "/prop/lid")
+    UsdGeom.XformCommonAPI(lid_x).SetTranslate(Gf.Vec3d(0, 0, 0.06))
+    lid = lid_x.GetPrim()
     UsdPhysics.RigidBodyAPI.Apply(lid)
+    lc = _box_mesh(stage, "/prop/lid/lid_collision", (0.1, 0.1, 0.02), (0, 0, 0))
+    _collider(lc.GetPrim())
     j = UsdPhysics.RevoluteJoint.Define(stage, "/prop/lid_hinge")
+    j.CreateAxisAttr("Y")
+    j.CreateLocalPos0Attr(Gf.Vec3f(-0.05, 0, 0.05))
+    j.CreateLocalPos1Attr(Gf.Vec3f(-0.05, 0, -0.01))
+    j.CreateLowerLimitAttr(0.0)
+    j.CreateUpperLimitAttr(110.0)
     j.CreateBody0Rel().SetTargets([body.GetPath()])
     j.CreateBody1Rel().SetTargets([lid.GetPath()])
     op = Sdf.TokenListOp()
@@ -200,3 +216,74 @@ def build_runtime_variant_asset(asset_dir: Path) -> Path:
         vs.SetVariantSelection(default)
     stage.GetRootLayer().Save()
     return root
+
+
+def build_mimic_gripper(path: Path) -> Path:
+    """Palm + driven finger + two followers: one PhysX mimic (gearing -1 => same direction under
+    PhysX's q + g*q_ref + o = 0) and one Newton mimic (coef1 = -1 => mirrored).
+    The driven finger is authored rotated 10 deg about its axis, to test MJCF `ref`."""
+    from pxr import Sdf
+
+    stage = Usd.Stage.CreateNew(str(path))
+    UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+    root = UsdGeom.Xform.Define(stage, "/gripper").GetPrim()
+    stage.SetDefaultPrim(root)
+    UsdPhysics.ArticulationRootAPI.Apply(root)
+
+    def body(name, pos, size, rot_deg=0.0):
+        x = UsdGeom.Xform.Define(stage, f"/gripper/{name}")
+        api = UsdGeom.XformCommonAPI(x)
+        api.SetTranslate(Gf.Vec3d(*pos))
+        if rot_deg:
+            api.SetRotate(Gf.Vec3f(0, rot_deg, 0))
+        UsdPhysics.RigidBodyAPI.Apply(x.GetPrim())
+        UsdPhysics.MassAPI.Apply(x.GetPrim()).CreateMassAttr(0.05)
+        c = _box_mesh(stage, f"/gripper/{name}/{name}_col", size, (0, 0, 0))
+        _collider(c.GetPrim())
+        return x.GetPrim()
+
+    palm = body("palm", (0, 0, 0), (0.08, 0.04, 0.02))
+    UsdPhysics.MassAPI(palm).GetMassAttr().Set(0.5)
+    lead = body("finger_lead", (0.03, 0, 0.03), (0.01, 0.01, 0.04), rot_deg=10.0)
+    phx = body("finger_physx", (-0.03, 0, 0.03), (0.01, 0.01, 0.04))
+    nwt = body("finger_newton", (0, 0.035, 0.03), (0.01, 0.01, 0.04))
+
+    fj = UsdPhysics.FixedJoint.Define(stage, "/gripper/joints/palm_fixed")
+    fj.CreateBody1Rel().SetTargets([palm.GetPath()])
+
+    def hinge(name, child, lo, hi, x, rot_deg=0.0):
+        j = UsdPhysics.RevoluteJoint.Define(stage, f"/gripper/joints/{name}")
+        j.CreateBody0Rel().SetTargets([palm.GetPath()])
+        j.CreateBody1Rel().SetTargets([child.GetPath()])
+        j.CreateAxisAttr("Y")  # fingers tilt about their base, like a real gripper
+        j.CreateLocalPos0Attr(Gf.Vec3f(*x))
+        j.CreateLocalPos1Attr(Gf.Vec3f(0, 0, -0.02))
+        # joint frame on the child cancels its authored rotation => joint value at rest = rot_deg
+        j.CreateLocalRot1Attr(Gf.Quatf(1, 0, 0, 0))
+        j.CreateLowerLimitAttr(lo)
+        j.CreateUpperLimitAttr(hi)
+        return j
+
+    lead_j = hinge("lead_joint", lead, 0.0, 45.0, (0.03, 0, 0.01))
+    d = UsdPhysics.DriveAPI.Apply(lead_j.GetPrim(), "angular")
+    d.CreateStiffnessAttr(0.02)  # N·m/deg; stable at a 2 ms step for a 50 g finger
+    d.CreateDampingAttr(0.0005)
+    d.CreateMaxForceAttr(10.0)
+
+    pj = hinge("physx_follower", phx, 0.0, 45.0, (-0.03, 0, 0.01))
+    op = Sdf.TokenListOp()
+    op.prependedItems = ["PhysxMimicJointAPI:rotZ"]
+    pj.GetPrim().SetMetadata("apiSchemas", op)
+    pj.GetPrim().CreateAttribute("physxMimicJoint:rotZ:gearing", Sdf.ValueTypeNames.Float).Set(-1.0)
+    pj.GetPrim().CreateAttribute("physxMimicJoint:rotZ:offset", Sdf.ValueTypeNames.Float).Set(0.0)
+    pj.GetPrim().CreateRelationship("physxMimicJoint:rotZ:referenceJoint").SetTargets(
+        [lead_j.GetPath()]
+    )
+
+    nj = hinge("newton_follower", nwt, -45.0, 0.0, (0, 0.035, 0.01))
+    nj.GetPrim().CreateRelationship("newton:mimicJoint").SetTargets([lead_j.GetPath()])
+    nj.GetPrim().CreateAttribute("newton:mimicCoef0", Sdf.ValueTypeNames.Float).Set(0.0)
+    nj.GetPrim().CreateAttribute("newton:mimicCoef1", Sdf.ValueTypeNames.Float).Set(-1.0)
+    stage.GetRootLayer().Save()
+    return path

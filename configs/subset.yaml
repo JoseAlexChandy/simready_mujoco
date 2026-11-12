@@ -19,7 +19,7 @@ sim_profile: manipulation   # see src/simready_mujoco/sim_profiles.yaml
 # Physics variant to compose: mujoco (MuJoCo=Enabled, PhysX/Newton=Disabled) | physx | newton | authored
 # Per-asset override: `runtime:` and/or `variants: {SET: OPTION}`.
 runtime: mujoco
-generate_collision: true
+generate_collision: false   # CoACD decomposition; only used by the upstream backend
 
 assets:
   # --- synthetic control asset (always available, known ground truth) ---

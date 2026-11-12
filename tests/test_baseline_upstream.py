@@ -20,7 +20,7 @@ except UpstreamNotFound:
 
 @pytest.fixture
 def cabinet_mjcf(cabinet_usd, tmp_path):
-    return convert(cabinet_usd, tmp_path / "out", sim_profile="manipulation")
+    return convert(cabinet_usd, tmp_path / "out", sim_profile="manipulation", backend="upstream")
 
 
 def _model(path):

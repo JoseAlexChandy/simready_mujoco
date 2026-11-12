@@ -179,7 +179,7 @@ def convert(
         "manipulation", help="Preset from sim_profiles.yaml, or 'none'"
     ),
     collision: bool = typer.Option(False, "--collision", help="Generate convex collision meshes"),
-    backend: str = typer.Option("upstream", help="Conversion backend"),
+    backend: str = typer.Option("native", help="Conversion backend: native | upstream"),
     runtime: str = typer.Option("mujoco", "--runtime", "-r", help=RUNTIME_HELP),
     variant: list[str] = typer.Option(None, "--variant", "-v", help=VARIANT_HELP),
     verbose: bool = typer.Option(False, "--verbose", help="Show third-party log output"),
@@ -272,6 +272,11 @@ def batch(
             )
             row["stage"] = "load"
             row.update(summarize_mjcf(mjcf).to_dict(), ok=True, stage="done")
+            rep = mjcf.parent / "conversion_report.json"
+            if rep.exists():
+                conv = json.loads(rep.read_text())
+                row["warnings"] = conv.get("warnings", [])
+                row["stiff_drives"] = len(conv.get("stiff_drives", []))
             console.print(f"[green]✓[/] {aid}")
         except Exception as e:  # noqa: BLE001
             row["error"] = f"{type(e).__name__}: {e}"
@@ -295,7 +300,7 @@ def batch(
         "Joints",
         "Act.",
         "Mass kg",
-        "Lost",
+        "Warn",
     ):
         t.add_column(c)
     for r in results:
@@ -308,13 +313,15 @@ def batch(
             str(r.get("joints", "-")),
             str(r.get("actuators", "-")),
             f"{r['total_mass_kg']:.3f}" if "total_mass_kg" in r else "-",
-            str(len(r.get("dropped_by_baseline", []))),
+            str(len(r.get("warnings", []))) if "warnings" in r else "-",
         )
     console.print(t)
     licences = {r["id"]: r.get("license") for r in results if r.get("license")}
     if licences:
         console.print("Licences: " + ", ".join(f"{k}: {v}" for k, v in licences.items()))
-    console.print(f"Report: {report}  (per-asset inspection.json alongside)")
+    console.print(
+        f"Report: {report}  (per asset: inspection.json, conversion_report.json, convert.log)"
+    )
     if not all(r["ok"] for r in results):
         raise typer.Exit(1)
 
@@ -327,6 +334,74 @@ def _mjc_cell(r: dict) -> str:
         return "[yellow]none[/]"
     n_prims = sum((r.get("mjc_prim_types") or {}).values())
     return f"{len(r.get('mjc_schemas') or [])} API, {n_prims} prims"
+
+
+@app.command(name="compare")
+def compare_cmd(
+    ours: Path = typer.Argument(..., exists=True, help="Our converted MJCF (A)"),
+    reference: Path = typer.Argument(..., exists=True, help="Reference MJCF, e.g. Menagerie (B)"),
+    seconds: float = typer.Option(2.0, help="Duration of the hold-pose test"),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON"),
+) -> None:
+    """Compare two models of the same mechanism: masses, joints, actuators, hold-pose test."""
+    import dataclasses
+    import math
+
+    from simready_mujoco.sim.compare import compare
+
+    c = compare(ours, reference, seconds)
+    if as_json:
+        print(json.dumps(dataclasses.asdict(c), indent=2, default=str))
+        return
+
+    def pair(a, b, fmt="{:.4g}"):
+        def f(x):
+            if x is None or (isinstance(x, float) and math.isnan(x)):
+                return "-"
+            if isinstance(x, tuple):
+                return "[" + " ".join(fmt.format(v) for v in x) + "]"
+            return fmt.format(x)
+
+        same = a == b or (
+            isinstance(a, float)
+            and isinstance(b, float)
+            and math.isclose(a, b, rel_tol=0.02, abs_tol=1e-6)
+        )
+        colour = "green" if same else "yellow"
+        return f"[{colour}]{f(a)} | {f(b)}[/]"
+
+    console.rule("A = ours  |  B = reference")
+    console.print(f"A: {c.file_a}\nB: {c.file_b}")
+    console.print(
+        f"total mass {pair(*c.total_mass)} kg · joints {pair(*c.n_joints, '{}')} · "
+        f"actuators {pair(*c.n_actuators, '{}')}"
+    )
+    t = Table(title="Joints (matched by order)  A | B")
+    for col in ("A / B", "range", "armature", "damping", "frictionloss", "moved mass kg"):
+        t.add_column(col)
+    for j in c.joints:
+        t.add_row(
+            f"{j.name_a}\n{j.name_b}",
+            pair(j.range_a, j.range_b),
+            pair(*j.armature),
+            pair(*j.damping),
+            pair(*j.frictionloss),
+            pair(*j.child_mass),
+        )
+    console.print(t)
+    if c.actuators:
+        t = Table(title="Actuators  A | B")
+        for col in ("joint (A)", "kp", "kv", "forcerange"):
+            t.add_column(col)
+        for a in c.actuators:
+            t.add_row(a.joint, pair(*a.kp), pair(*a.kv), pair(*a.forcerange))
+        console.print(t)
+    ha, hb = c.hold_error
+    console.print(
+        f"Hold-pose test ({seconds:g} s), max joint error: A {ha if ha is None else f'{ha:.4f}'} rad · B {hb if hb is None else f'{hb:.4f}'} rad"
+    )
+    for n in c.notes:
+        console.print(f"[dim]{n}[/]")
 
 
 @app.command()

@@ -5,6 +5,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [SemVer](ht
 ## [Unreleased]
 
 ### Added
+- **Native USD → MJCF backend** (now the default; `--backend upstream` keeps the baseline):
+  kinematic tree from UsdPhysics joints with correct joint frames and `ref`; mass via USD's
+  `ComputeMassProperties`; authored colliders (primitives + meshes) and visuals with material
+  colours; physics-material friction; `MjcActuator`, `MjcJointAPI`, `MjcCollisionAPI`,
+  `MjcEqualityAPI`, `MjcSceneAPI`, Newton joint attributes; UsdPhysics drives → PD actuators;
+  PhysX and Newton mimic joints → joint equalities; loop closures → connect/weld; fixed tendons;
+  contact excludes from USD joint/filter semantics. Writes `conversion_report.json`.
+- Stiff-drive check: warns when a drive is too stiff for the timestep and suggests armature.
+- `srmj compare A.xml B.xml`: masses, joints, actuators and a hold-pose test side by side.
+- `scripts/roundtrip_menagerie.sh` / `make roundtrip`: Menagerie → USD → MJCF validation.
+  FR3, UR5e, Kinova Gen3 and Robotiq 2F-85 match Menagerie (see docs/validation.md).
+- ADR 0003 (native backend semantics); docs/validation.md.
+
+### Changed
+- Asset-authored MuJoCo options now take precedence over simulation presets.
+- Batch table shows conversion warnings; Hugging Face progress bars silenced.
+
+### Added
 - Pilot subset of 10 real SimReady Central assets (rigid props, file cabinet, fridge, faucet, Franka FR3, Franka Hand, Robotiq 2F-85) in `configs/subset.yaml`.
 - `simready:` config entries: paste a package URL from the SimReady Central index; the fetcher downloads that commit and finds the root USD.
 - `srmj batch --only ID` and `--fetch-only`; per-asset `inspection.json`; licence and failing stage in the batch report.

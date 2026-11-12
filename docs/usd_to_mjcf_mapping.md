@@ -2,26 +2,33 @@
 
 Living document: how each USD physics property becomes MJCF, and its implementation status. Update the **Status** column in the same PR as the code.
 
-Legend: ✅ done · 🟡 baseline only (upstream usd2mjcf) · 🔲 planned
+Legend: ✅ done (native backend) · 🔲 planned
 
 | Area | USD source | MJCF target | Status |
 |---|---|---|---|
-| Visual meshes + materials | `UsdGeom.Mesh`, `UsdShade` | `<mesh>`, `<material>`, geoms in `visual` class | 🟡 |
-| Revolute / prismatic joints | `RevoluteJoint`, `PrismaticJoint` | `hinge` / `slide` with `range` | 🟡 |
-| Fixed joints | `FixedJoint` | merged body | 🟡 |
-| Mass / CoM / inertia | `MassAPI`, density, collider volumes | `<inertial>`; visual geoms `mass="0"` | 🔲 |
-| Physics materials | `PhysicsMaterialAPI` (purpose `physics`) | geom `friction`, `solref` | 🔲 |
-| Joint drives | `DriveAPI` (angular/linear) | `<general>` PD / `<velocity>`, `forcerange` | 🔲 |
-| Initial state | `JointStateAPI`, drive targets | `<keyframe>` | 🔲 |
-| Spherical joints | `SphericalJoint` | `ball` | 🔲 |
-| D6 joints | `Joint` + per-axis `LimitAPI` | stacked `hinge`/`slide` (or `ball`) | 🔲 |
-| Mimic joints | `PhysxMimicJointAPI` | `<equality><joint polycoef>` | 🔲 |
-| Closed loops | joints with `excludeFromArticulation` | `<equality><connect>` | 🔲 |
-| Primitive colliders | Cube/Sphere/Capsule/Cylinder + `CollisionAPI` | `box`/`sphere`/`capsule`/`cylinder` | 🔲 |
-| Mesh colliders | `MeshCollisionAPI.approximation` | mesh / CoACD hulls | 🟡 (visual-mesh CoACD only) |
-| Collision filtering | `FilteredPairsAPI`, collision groups, self-collision | `<exclude>`, `contype`/`conaffinity` | 🔲 |
-| Gravity | `PhysicsScene` | `<option gravity>` | 🔲 |
-| Solver settings | — (MuJoCo-specific) | presets in `src/simready_mujoco/sim_profiles.yaml` | ✅ |
+| Kinematic tree | UsdPhysics joints (body0 → body1), flipped where needed | nested `<body>`; joint frames from `localPose0/1` | ✅ |
+| Joint rest angle | joint frames at the authored pose | `ref` | ✅ |
+| Revolute / prismatic | `RevoluteJoint`, `PrismaticJoint` | `hinge` / `slide`, `range` (deg → rad) | ✅ |
+| Fixed | `FixedJoint` | child body without joint (welded) | ✅ |
+| Spherical | `SphericalJoint` | `ball`, symmetric cone `range` | ✅ |
+| D6 | `Joint` + per-axis `LimitAPI` | — | 🔲 (warned, treated as fixed) |
+| Loose bodies | rigid body not attached to world | `freejoint` (kinematic → welded) | ✅ |
+| Loop closures | `excludeFromArticulation` / cycles | `<equality><connect>` / `<weld>` | ✅ |
+| Mass / CoM / inertia | `MassAPI`, collider density, defaults | `<inertial>` via `ComputeMassProperties` | ✅ |
+| Collision | authored colliders (primitives + meshes) | geoms in `collision` class | ✅ |
+| Collision filtering | joint `collisionEnabled=false`, `FilteredPairsAPI` | `<contact><exclude>` | ✅ |
+| Visuals | renderable gprims | geoms in `visual` class, material base colour | ✅ (no textures yet) |
+| Physics materials | `PhysicsMaterialAPI` (+ `MjcMaterialAPI`) | geom `friction` | ✅ (restitution 🔲) |
+| MuJoCo actuators | `MjcActuator` (joint or tendon target) | `<general>` 1:1 | ✅ |
+| UsdPhysics drives | `DriveAPI` angular/linear | PD `<general>` (per-degree → per-radian) | ✅ |
+| Joint dynamics | `MjcJointAPI`, `newton:armature/damping/friction` | `armature`, `damping`, `frictionloss`, … | ✅ |
+| Mimic joints | `NewtonMimicAPI`, `PhysxMimicJointAPI` | `<equality><joint polycoef>` (re-based on `ref`) | ✅ |
+| Fixed tendons | `MjcTendon` type fixed | `<tendon><fixed>` | ✅ (spatial 🔲) |
+| Contact params | `MjcCollisionAPI` | `condim`, `margin`, `solref`, … | ✅ |
+| Equality softness | `MjcEqualityAPI` | `solref`, `solimp` | ✅ |
+| Scene | `PhysicsScene` gravity, `MjcSceneAPI` | `<option>`, `<flag>` (asset values beat presets) | ✅ |
+| Keyframes | `MjcKeyframe` | `<keyframe>` | 🔲 |
+| Stiff-drive check | — | warning + suggested `armature` in `conversion_report.json` | ✅ |
 
 ## Source priority (ADR 0002)
 

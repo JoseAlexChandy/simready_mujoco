@@ -23,8 +23,16 @@ def get_profile(name: str, path: Path | None = None) -> dict[str, Any]:
     return profiles[name]
 
 
-def apply_profile(mjcf_file: Path, profile: dict[str, Any]) -> None:
-    """Overwrite <option> (and its <flag>) in an MJCF file with the profile's settings."""
+def apply_profile(
+    mjcf_file: Path, profile: dict[str, Any], keep: set[str] | None = None
+) -> list[str]:
+    """Write the profile's settings into <option> (and its <flag>) in an MJCF file.
+
+    keep: option/flag names the asset authored itself (mjc:option:*, mjc:flag:*); those win
+    over the profile. Returns the names that were kept.
+    """
+    keep = keep or set()
+    kept: list[str] = []
     tree = ET.parse(mjcf_file)
     root = tree.getroot()
     option = root.find("option")
@@ -40,9 +48,15 @@ def apply_profile(mjcf_file: Path, profile: dict[str, Any]) -> None:
             if flag is None:
                 flag = ET.SubElement(option, "flag")
             for fk, fv in value.items():
+                if fk in keep:
+                    kept.append(fk)
+                    continue
                 flag.set(fk, str(fv))
+        elif key in keep:
+            kept.append(key)
         else:
             option.set(key, str(value))
 
     ET.indent(tree)
     tree.write(mjcf_file, encoding="utf-8", xml_declaration=False)
+    return kept

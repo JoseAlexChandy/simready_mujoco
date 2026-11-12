@@ -1,21 +1,27 @@
 """Intermediate representation (IR) between USD and MJCF.
 
 Plain dataclasses with no USD or MuJoCo types, so mapping functions are easy to test.
-Everything is in SI units: metres, kilograms, radians, N/m or N·m/rad gains.
+Units: metres, kilograms, radians; gains in N/m or N·m/rad. Quaternions are (w, x, y, z).
+
+The body list is a tree: each Body names its parent ("" = world) and the joints that connect
+it to that parent. Constraints that don't fit the tree (loops, mimic couplings) are Equality.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any
+
+Vec3 = tuple[float, float, float]
+Quat = tuple[float, float, float, float]
 
 
 class JointType(str, Enum):
-    FIXED = "fixed"
-    REVOLUTE = "revolute"
-    PRISMATIC = "prismatic"
-    SPHERICAL = "spherical"
-    D6 = "d6"
+    HINGE = "hinge"
+    SLIDE = "slide"
+    BALL = "ball"
+    FREE = "free"
 
 
 class ShapeType(str, Enum):
@@ -27,10 +33,6 @@ class ShapeType(str, Enum):
     PLANE = "plane"
 
 
-Vec3 = tuple[float, float, float]
-Quat = tuple[float, float, float, float]  # (w, x, y, z), MuJoCo convention
-
-
 @dataclass
 class Pose:
     pos: Vec3 = (0.0, 0.0, 0.0)
@@ -39,22 +41,24 @@ class Pose:
 
 @dataclass
 class Inertial:
-    """Mass properties of a body. `source` records where they came from, for the report."""
+    """Mass properties. `source` records where they came from, for the report."""
 
     mass: float
-    com: Vec3 = (0.0, 0.0, 0.0)
-    diag_inertia: Vec3 | None = None
-    principal_axes: Quat = (1.0, 0.0, 0.0, 0.0)
-    source: str = "default"  # "authored" | "density" | "computed" | "default"
+    pos: Vec3 = (0.0, 0.0, 0.0)  # centre of mass in the body frame
+    diaginertia: Vec3 = (0.0, 0.0, 0.0)
+    quat: Quat = (1.0, 0.0, 0.0, 0.0)  # principal axes in the body frame
+    source: str = "computed"  # "authored" | "computed" | "default"
 
 
 @dataclass
-class Material:
+class MeshData:
+    """Triangle mesh in the geom's own frame (scale already baked in)."""
+
     name: str
-    dynamic_friction: float | None = None
-    static_friction: float | None = None
-    restitution: float | None = None
-    density: float | None = None
+    vertices: Any  # (N, 3) float array
+    faces: Any  # (M, 3) int array
+    inertia: str | None = None  # MuJoCo mesh inertia mode ("shell", "convex", ...)
+    maxhullvert: int | None = None
 
 
 @dataclass
@@ -62,63 +66,78 @@ class Geom:
     name: str
     shape: ShapeType
     pose: Pose = field(default_factory=Pose)
-    size: tuple[float, ...] = ()
-    mesh_file: str | None = None
-    material: str | None = None  # name of a Material
+    size: tuple[float, ...] = ()  # MJCF size semantics (half-extents, radius, half-length)
+    mesh: str | None = None  # MeshData.name
     collision: bool = True
-    mesh_approximation: str | None = None  # USD MeshCollisionAPI approximation
-
-
-@dataclass
-class Drive:
-    """Joint drive in SI units (already converted from USD degrees where needed)."""
-
-    stiffness: float = 0.0
-    damping: float = 0.0
-    max_force: float | None = None  # None = unlimited
-    target_position: float = 0.0
-    target_velocity: float = 0.0
-    acceleration: bool = False  # USD drive type "acceleration"
+    rgba: tuple[float, float, float, float] | None = None
+    friction: tuple[float, ...] | None = None  # (slide, torsion, roll); None = MuJoCo default
+    extra: dict[str, Any] = field(default_factory=dict)  # passthrough MJCF attributes (mjc:*)
+    source_path: str = ""
 
 
 @dataclass
 class Joint:
     name: str
     type: JointType
-    parent: str
-    child: str
+    pos: Vec3 = (0.0, 0.0, 0.0)  # in the child body frame
     axis: Vec3 = (0.0, 0.0, 1.0)
-    pose_in_parent: Pose = field(default_factory=Pose)
-    pose_in_child: Pose = field(default_factory=Pose)
-    limits: tuple[float, float] | None = None
-    drive: Drive | None = None
-    friction: float = 0.0
-    armature: float = 0.0
-    exclude_from_articulation: bool = False  # loop-closing joint -> equality constraint
-
-
-@dataclass
-class Mimic:
-    follower: str
-    leader: str
-    gearing: float = 1.0
-    offset: float = 0.0
+    range: tuple[float, float] | None = None
+    ref: float = 0.0  # joint value at the authored pose (MJCF `ref`)
+    extra: dict[str, Any] = field(default_factory=dict)  # armature, damping, frictionloss, ...
+    source_path: str = ""
 
 
 @dataclass
 class Body:
     name: str
-    pose: Pose = field(default_factory=Pose)
+    parent: str = ""  # "" = world
+    pose: Pose = field(default_factory=Pose)  # relative to parent
+    joints: list[Joint] = field(default_factory=list)
     inertial: Inertial | None = None
     geoms: list[Geom] = field(default_factory=list)
+    source_path: str = ""
+
+
+@dataclass
+class Actuator:
+    name: str
+    joint: str  # target joint name, or tendon name when target == "tendon"
+    attrs: dict[str, Any] = field(default_factory=dict)  # MJCF <general> attributes
+    source: str = "mjc"  # "mjc" (MjcActuator prim) | "drive" (UsdPhysics DriveAPI)
+    target: str = "joint"  # "joint" | "tendon"
+
+
+@dataclass
+class Tendon:
+    """Fixed tendon: a linear combination of joint coordinates."""
+
+    name: str
+    joints: list[tuple[str, float]] = field(default_factory=list)  # (joint name, coef)
+    attrs: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class Equality:
+    kind: str  # "joint" | "connect" | "weld"
+    name: str
+    attrs: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class Model:
     name: str
-    bodies: list[Body] = field(default_factory=list)
-    joints: list[Joint] = field(default_factory=list)
-    materials: dict[str, Material] = field(default_factory=dict)
-    mimics: list[Mimic] = field(default_factory=list)
+    bodies: list[Body] = field(default_factory=list)  # parents always listed before children
+    world_geoms: list[Geom] = field(default_factory=list)  # static colliders/visuals
+    meshes: dict[str, MeshData] = field(default_factory=dict)
+    actuators: list[Actuator] = field(default_factory=list)
+    equalities: list[Equality] = field(default_factory=list)
+    tendons: list[Tendon] = field(default_factory=list)
+    excludes: list[tuple[str, str]] = field(default_factory=list)  # body pairs that never collide
+    option: dict[str, Any] = field(default_factory=dict)
+    flags: dict[str, Any] = field(default_factory=dict)
     gravity: Vec3 = (0.0, 0.0, -9.81)
     warnings: list[str] = field(default_factory=list)
+    notes: dict[str, Any] = field(default_factory=dict)  # stats for the report
+
+    def body(self, name: str) -> Body:
+        return next(b for b in self.bodies if b.name == name)

@@ -36,3 +36,13 @@ def test_apply_profile_creates_option_if_missing(tmp_path):
     root = ET.parse(xml).getroot()
     assert [c.tag for c in root][:2] == ["compiler", "option"]
     assert root.find("option").get("timestep") == "0.004"
+
+
+def test_asset_authored_options_win(tmp_path):
+    xml = tmp_path / "m.xml"
+    xml.write_text('<mujoco><option integrator="Euler"/><worldbody/></mujoco>')
+    kept = apply_profile(xml, get_profile("manipulation"), keep={"integrator"})
+    opt = ET.parse(xml).getroot().find("option")
+    assert kept == ["integrator"]
+    assert opt.get("integrator") == "Euler"
+    assert opt.get("timestep") == "0.002"

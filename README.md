@@ -2,7 +2,7 @@
 
 Bring [NVIDIA SimReady Central](https://huggingface.co/spaces/nvidia/simready-central) OpenUSD assets into **MuJoCo** with their physics intact (mass, friction, joints, drives, collisions), and demo that they behave correctly.
 
-Builds on [LightwheelAI/usd2mjcf](https://github.com/LightwheelAI/usd2mjcf) (included as a pinned submodule) and closes the physics gaps it leaves. See [docs/usd_to_mjcf_mapping.md](docs/usd_to_mjcf_mapping.md) for what's covered.
+Has its own USD → MJCF converter that reads each asset's MuJoCo runtime layer (`mjcPhysics`) and UsdPhysics data, validated against MuJoCo Menagerie ([docs/validation.md](docs/validation.md)). [LightwheelAI/usd2mjcf](https://github.com/LightwheelAI/usd2mjcf) is kept as a pinned submodule for baseline comparison. Coverage: [docs/usd_to_mjcf_mapping.md](docs/usd_to_mjcf_mapping.md).
 
 ---
 
@@ -39,6 +39,10 @@ srmj batch configs/subset.yaml --only franka_fr3  # just one asset
 | `srmj convert FILE [-o DIR] [--collision] [--sim-profile NAME]` | Converts one asset, applies a MuJoCo simulation preset, verifies it loads and settles |
 | `srmj batch CONFIG.yaml` | Converts every asset in a config (local or Hugging Face), writes `outputs/batch_report.json` |
 | `srmj view FILE.xml` | Opens the interactive MuJoCo viewer |
+| `srmj compare OURS.xml REF.xml` | Side-by-side masses, joints, actuators and a hold-pose test (e.g. vs Menagerie) |
+| `make roundtrip` | Validates the converter: Menagerie FR3 → USD → MJCF, compared with the original |
+
+Common options: `--runtime mujoco|physx|newton|authored` (which physics variant to read, default `mujoco`), `--variant SET=OPTION`, `--backend native|upstream`, `--verbose`.
 
 ## Use from Python
 
@@ -74,8 +78,8 @@ outputs/                 conversion results (git-ignored)
 ## Roadmap
 
 1. ✅ Project setup, inspection tool, baseline conversion, simulation presets
-2. Pick the pilot subset from SimReady Central and record a baseline report
-3. Native backend: mass/inertia → materials → drives → collision → spherical/D6/mimic/loops
+2. ✅ Pilot subset from SimReady Central, runtime-variant support
+3. ✅ Native backend (validated against Menagerie); next: textures, keyframes, D6, spatial tendons
 4. Demo scenarios (drop, push, joint sweep, drive) with recorded videos
 5. Validation report: USD values vs MJCF values per asset
 6. Scale to the full catalogue

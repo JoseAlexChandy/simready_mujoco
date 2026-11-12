@@ -83,6 +83,9 @@ def read_package_info(asset_dir: Path) -> dict[str, Any]:
 
 
 def _download(repo: str, revision: str | None, patterns: list[str]) -> Path:
+    import os
+
+    os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")  # keep batch output readable
     try:
         from huggingface_hub import snapshot_download
     except ImportError as e:

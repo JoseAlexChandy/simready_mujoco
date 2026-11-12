@@ -1,7 +1,7 @@
 # 0002 — Read the asset's MuJoCo runtime layer, translate UsdPhysics/PhysX only as a fallback
 
 - **Date:** 2026-11-12
-- **Status:** Proposed (confirm once the pilot assets' MuJoCo layers have been inspected)
+- **Status:** Accepted. Pilot inspection showed the FR3 and Franka Hand carry `MjcActuator`/`MjcJointAPI` data; NVIDIA props only change collider approximation under the MuJoCo variant.
 
 ## Context
 
