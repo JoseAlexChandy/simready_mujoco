@@ -19,7 +19,7 @@ Legend: ✅ done (native backend) · 🔲 planned
 | Collision filtering | joint `collisionEnabled=false`, `FilteredPairsAPI` | `<contact><exclude>` | ✅ |
 | Visuals | renderable gprims | geoms in `visual` class, material base colour | ✅ (no textures yet) |
 | Physics materials | `PhysicsMaterialAPI` (+ `MjcMaterialAPI`) | geom `friction` | ✅ (restitution 🔲) |
-| MuJoCo actuators | `MjcActuator` (joint or tendon target) | `<general>` 1:1 | ✅ |
+| MuJoCo actuators | `MjcActuator` (joint or tendon target) | `<general>` 1:1; `--actuators auto` falls back to the drive if the MjcActuator can't hold a position | ✅ |
 | UsdPhysics drives | `DriveAPI` angular/linear | PD `<general>` (per-degree → per-radian) | ✅ |
 | Joint dynamics | `MjcJointAPI`, `newton:armature/damping/friction` | `armature`, `damping`, `frictionloss`, … | ✅ |
 | Mimic joints | `NewtonMimicAPI`, `PhysxMimicJointAPI` | `<equality><joint polycoef>` (re-based on `ref`) | ✅ |

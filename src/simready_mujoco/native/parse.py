@@ -257,7 +257,7 @@ class _Ctx:
 # ----------------------------------------------------------------------------- main entry
 
 
-def parse_stage(stage: Usd.Stage, name: str = "model") -> Model:
+def parse_stage(stage: Usd.Stage, name: str = "model", actuators: str = "auto") -> Model:
     ctx = _Ctx(
         stage=stage,
         mpu=float(UsdGeom.GetStageMetersPerUnit(stage)),
@@ -274,7 +274,7 @@ def parse_stage(stage: Usd.Stage, name: str = "model") -> Model:
     _collect_visuals(ctx, bodies, set(collider_owner))
     _compute_inertials(ctx, bodies)
     tendons = _collect_tendons(ctx)
-    _collect_actuators(ctx, parsed, tendons)
+    _collect_actuators(ctx, parsed, tendons, actuators)
     _collect_mimics(ctx)
     _collect_scene(ctx, parsed)
     _collect_excludes(ctx, parsed, edges)
@@ -805,32 +805,17 @@ def _collect_tendons(ctx: _Ctx) -> dict[str, str]:
     return names
 
 
-def _collect_actuators(ctx: _Ctx, parsed, tendons: dict[str, str]) -> None:
-    driven: set[str] = set()
-    for prim in ctx.stage.Traverse():
-        if prim.GetTypeName() != "MjcActuator":
-            continue
-        rel = prim.GetRelationship(MJC_TARGET)
-        targets = rel.GetTargets() if rel else []
-        tpath = str(targets[0]) if targets else ""
-        attrs = _passthrough(prim, MJC_ACTUATOR_ATTRS, MJC_ACTUATOR_RANGES)
-        aname = ctx.names("actuator", prim.GetName())
-        if tpath in ctx.joint_name:
-            jname = ctx.joint_name[tpath]
-            ctx.model.actuators.append(Actuator(aname, jname, attrs, "mjc"))
-            driven.add(jname)
-        elif tpath in tendons:
-            ctx.model.actuators.append(Actuator(aname, tendons[tpath], attrs, "mjc", "tendon"))
-        else:
-            ctx.model.warnings.append(
-                f"{prim.GetPath()}: actuator target '{tpath}' is not a converted joint or tendon, skipped"
-            )
+ACTUATOR_SOURCES = ("auto", "mjc", "drive")
 
+
+def _drive_actuators(ctx: _Ctx, parsed) -> dict[str, tuple[dict[str, Any], str, float]]:
+    """UsdPhysics drives as PD actuators: {joint name: (MJCF attrs, USD joint path, kp)}."""
+    out: dict[str, tuple[dict[str, Any], str, float]] = {}
     for kind in ("RevoluteJoint", "PrismaticJoint"):
         for path, desc in parsed.get(kind, []):
             jname = ctx.joint_name.get(path)
             drive = getattr(desc, "drive", None)
-            if not jname or jname in driven or drive is None or not drive.enabled:
+            if not jname or drive is None or not drive.enabled:
                 continue
             kp, kv = float(drive.stiffness), float(drive.damping)
             if kp <= 0 and kv <= 0:
@@ -856,10 +841,71 @@ def _collect_actuators(ctx: _Ctx, parsed, tendons: dict[str, str]) -> None:
             fl = float(drive.forceLimit)
             if math.isfinite(fl) and 0 < fl < 1e30:
                 attrs["forcerange"] = [-fl, fl]
-            prim = ctx.stage.GetPrimAtPath(path)
-            ctx.model.actuators.append(
-                Actuator(ctx.names("actuator", f"{prim.GetName()}_drive"), jname, attrs, "drive")
+            out[jname] = (attrs, path, kp)
+    return out
+
+
+def _lacks_position_feedback(attrs: dict[str, Any]) -> bool:
+    """True if an MjcActuator cannot hold a position (no affine -kp*q bias term)."""
+    if attrs.get("biastype") != "affine":
+        return True
+    bias = attrs.get("biasprm") or [0.0, 0.0, 0.0]
+    return len(bias) < 2 or abs(float(bias[1])) < 1e-9
+
+
+def _collect_actuators(ctx: _Ctx, parsed, tendons: dict[str, str], source: str = "auto") -> None:
+    """Actuators from MjcActuator prims and/or UsdPhysics drives.
+
+    source: "mjc"   MjcActuator wins wherever it exists (drives only fill the gaps)
+            "drive" UsdPhysics drives win wherever they exist
+            "auto"  like "mjc", except when an MjcActuator has no position feedback but the
+                    joint has a stiff position drive (seen in SimReady FR3: MjcActuator gains of
+                    0.003, drive gains matching Menagerie); then the drive is used and we warn.
+    """
+    if source not in ACTUATOR_SOURCES:
+        raise ValueError(f"actuator source must be one of {ACTUATOR_SOURCES}")
+    drives = _drive_actuators(ctx, parsed)
+    driven: set[str] = set()
+    for prim in ctx.stage.Traverse():
+        if prim.GetTypeName() != "MjcActuator":
+            continue
+        rel = prim.GetRelationship(MJC_TARGET)
+        targets = rel.GetTargets() if rel else []
+        tpath = str(targets[0]) if targets else ""
+        attrs = _passthrough(prim, MJC_ACTUATOR_ATTRS, MJC_ACTUATOR_RANGES)
+        if tpath in ctx.joint_name:
+            jname = ctx.joint_name[tpath]
+            drive = drives.get(jname)
+            use_drive = drive is not None and (
+                source == "drive"
+                or (source == "auto" and drive[2] > 0 and _lacks_position_feedback(attrs))
             )
+            if use_drive:
+                if source == "auto":
+                    ctx.model.warnings.append(
+                        f"{prim.GetPath()}: MjcActuator has no position feedback "
+                        f"(gainprm={attrs.get('gainprm', [1])[:1]}, biasprm={attrs.get('biasprm', [])[:3]}) "
+                        f"but the joint has a position drive (kp={drive[2]:.4g}); using the drive"
+                    )
+                continue  # the drive is added below
+            aname = ctx.names("actuator", prim.GetName())
+            ctx.model.actuators.append(Actuator(aname, jname, attrs, "mjc"))
+            driven.add(jname)
+        elif tpath in tendons:
+            aname = ctx.names("actuator", prim.GetName())
+            ctx.model.actuators.append(Actuator(aname, tendons[tpath], attrs, "mjc", "tendon"))
+        else:
+            ctx.model.warnings.append(
+                f"{prim.GetPath()}: actuator target '{tpath}' is not a converted joint or tendon, skipped"
+            )
+
+    for jname, (attrs, path, _) in drives.items():
+        if jname in driven:
+            continue
+        prim = ctx.stage.GetPrimAtPath(path)
+        ctx.model.actuators.append(
+            Actuator(ctx.names("actuator", f"{prim.GetName()}_drive"), jname, attrs, "drive")
+        )
 
 
 # ----------------------------------------------------------------------------- 6. mimic

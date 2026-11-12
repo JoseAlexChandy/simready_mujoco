@@ -25,6 +25,7 @@ def convert(
     runtime: str = "mujoco",
     variants: dict[str, str] | None = None,
     quiet: bool = True,
+    actuators: str = "auto",
 ) -> Path:
     """Convert one USD asset to MJCF and return the MJCF file path.
 
@@ -37,6 +38,9 @@ def convert(
         runtime: physics variant to compose: "mujoco" (default), "physx", "newton", "authored"
         variants: extra {variant set: option} selections, e.g. {"Physics": "Newton_parallel_grip"}
         quiet: send third-party log output to <out_dir>/convert.log instead of the terminal
+        actuators: native backend: "auto" (MuJoCo layer, unless an MjcActuator can't hold a
+            position but a position drive exists), "mjc" (MuJoCo layer wins), "drive"
+            (UsdPhysics drives win)
     """
     usd_file, out_dir = Path(usd_file), Path(out_dir)
     if not usd_file.exists():
@@ -46,7 +50,7 @@ def convert(
         from simready_mujoco.native import parse_stage, write_mjcf  # noqa: PLC0415
 
         stage, _ = open_stage(usd_file, runtime=runtime, variants=variants)
-        model = parse_stage(stage, name=usd_file.stem)
+        model = parse_stage(stage, name=usd_file.stem, actuators=actuators)
         if generate_collision:
             model.notes["collision_flag"] = "ignored: native backend uses authored colliders"
         mjcf = write_mjcf(model, out_dir)

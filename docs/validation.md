@@ -35,3 +35,23 @@ authored vs computed mass, hinge anchors, limits in SI units, drive → PD actua
 reaching its target in simulation, physics-material friction, contact filtering, `MjcActuator`
 pass-through, free joints for loose bodies, PhysX and Newton mimic joints tracking in
 simulation, joint reference angles, fixed tendons.
+
+## Real SimReady assets: findings
+
+### Franka FR3 (`frankarobotics/simready-assets` @ b54ce583, `fr3v2_1`)
+
+| | SimReady MuJoCo layer (`MjcActuator`) | SimReady UsdPhysics drive (`ControlMode=position`) | Menagerie |
+|---|---|---|---|
+| kp | 0.003, and **no position term** (`biasprm = [0, 0, −0.003]`) | 78.54 N·m/° = **4500** N·m/rad | 4500 |
+| kv | 0.003 | 7.854 N·m/° = **450** | 450 |
+| force range | ±87 / ±12 | ±87 / ±12 | ±87 / ±12 |
+
+The MuJoCo layer's actuator gains equal the URDF damping value (`urdf:dynamics:damping = 0.003`),
+so they look like an authoring bug in the asset's MJCF/MuJoCo generation; with them the arm
+cannot hold a pose and falls under gravity. `--actuators auto` (default) detects an
+`MjcActuator` without position feedback on a joint that has a stiff position drive, uses the
+drive, and logs a warning. Worth reporting upstream to Franka/NVIDIA.
+
+Other differences vs Menagerie are genuine model differences, not conversion errors: link
+masses (total 15.93 vs 18.32 kg, SimReady has no separate base body), joint frictionloss 0.2
+on all joints, joint damping not authored for MuJoCo.

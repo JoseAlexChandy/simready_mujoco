@@ -183,6 +183,11 @@ def convert(
     runtime: str = typer.Option("mujoco", "--runtime", "-r", help=RUNTIME_HELP),
     variant: list[str] = typer.Option(None, "--variant", "-v", help=VARIANT_HELP),
     verbose: bool = typer.Option(False, "--verbose", help="Show third-party log output"),
+    actuators: str = typer.Option(
+        "auto",
+        "--actuators",
+        help="Actuator source: auto | mjc (MuJoCo layer) | drive (UsdPhysics)",
+    ),
 ) -> None:
     """Convert one USD asset to MJCF and check it loads in MuJoCo."""
     from simready_mujoco.api import convert as _convert
@@ -200,6 +205,7 @@ def convert(
         runtime=runtime,
         variants=parse_variant_args(variant),
         quiet=not verbose,
+        actuators=actuators,
     )
     s = summarize_mjcf(mjcf)
     console.print(f"[green]✓[/] {mjcf}")
@@ -269,6 +275,7 @@ def batch(
                 runtime=rt,
                 variants=vs,
                 quiet=not verbose,
+                actuators=entry.get("actuators", cfg.get("actuators", "auto")),
             )
             row["stage"] = "load"
             row.update(summarize_mjcf(mjcf).to_dict(), ok=True, stage="done")

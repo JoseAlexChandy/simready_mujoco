@@ -247,3 +247,51 @@ def test_very_large_mesh_loads(cabinet_usd, tmp_path):
     m, _ = _load(convert(cabinet_usd, tmp_path / "o"))
     big_mesh = [i for i in range(m.nmesh) if m.mesh(i).name.startswith("big_detail")]
     assert big_mesh and m.mesh_facenum[big_mesh[0]] == len(big.faces)
+
+
+# --- actuator source policy (SimReady FR3: MjcActuator gains 0.003, drive gains = Menagerie) --
+
+
+def _fr3_like(tmp_path):
+    from pxr import Usd, UsdPhysics
+
+    usd = build_runtime_variant_asset(tmp_path / "prop_a01")
+    mj = tmp_path / "prop_a01" / "runnables" / "physics" / "mujoco.usda"
+    layer = Usd.Stage.Open(str(mj))
+    act = layer.GetPrimAtPath("/prop/actuators/hinge_motor")
+    act.GetAttribute("mjc:gainPrm").Set([0.003])
+    act.GetAttribute("mjc:biasPrm").Set([0.0, 0.0, -0.003])
+    layer.GetRootLayer().Save()
+    stage = Usd.Stage.Open(str(usd))
+    d = UsdPhysics.DriveAPI.Apply(stage.GetPrimAtPath("/prop/lid_hinge"), "angular")
+    d.CreateStiffnessAttr(78.5398178)  # 4500 N·m/rad, per degree
+    d.CreateDampingAttr(7.85398178)
+    d.CreateMaxForceAttr(87.0)
+    stage.GetRootLayer().Save()
+    return usd
+
+
+@pytest.mark.parametrize(
+    ("mode", "kp", "warned"),
+    [("auto", 4500.0, True), ("drive", 4500.0, False), ("mjc", 0.003, False)],
+)
+def test_actuator_source_policy(tmp_path, mode, kp, warned):
+    out = convert(_fr3_like(tmp_path), tmp_path / "o", actuators=mode)
+    m, _ = _load(out)
+    assert m.nu == 1
+    assert m.actuator_gainprm[0, 0] == pytest.approx(kp, rel=1e-5)
+    report = json.loads((out.parent / "conversion_report.json").read_text())
+    assert any("no position feedback" in w for w in report["warnings"]) == warned
+
+
+def test_good_mjc_actuator_beats_drive_in_auto(tmp_path):
+    from pxr import Usd, UsdPhysics
+
+    usd = build_runtime_variant_asset(tmp_path / "prop_a01")  # MjcActuator kp=100 with feedback
+    stage = Usd.Stage.Open(str(usd))
+    UsdPhysics.DriveAPI.Apply(
+        stage.GetPrimAtPath("/prop/lid_hinge"), "angular"
+    ).CreateStiffnessAttr(1.0)
+    stage.GetRootLayer().Save()
+    m, _ = _load(convert(usd, tmp_path / "o"))
+    assert m.nu == 1 and m.actuator_gainprm[0, 0] == pytest.approx(100.0)
