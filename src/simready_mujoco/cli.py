@@ -136,6 +136,16 @@ def inspect(
         )
     if r.physx_schemas:
         console.print(f"PhysX schemas: {', '.join(r.physx_schemas)}")
+    for name, v in r.variants.items():
+        console.print(
+            f"Variant set [cyan]{name}[/]: selected [cyan]{v['selected'] or '(none)'}[/] "
+            f"of {v['options']}"
+        )
+    if not r.bodies and any("physic" in n.lower() for n in r.variants):
+        console.print(
+            "[yellow]No rigid bodies found with the current variant selection. "
+            "The physics may live in another variant.[/]"
+        )
 
     if r.dropped_by_baseline:
         console.print("\n[yellow]Lost by the baseline (upstream usd2mjcf) converter:[/]")
@@ -179,8 +189,10 @@ def convert(
 def batch(
     config: Path = typer.Argument(..., exists=True, help="YAML file listing assets"),
     stop_on_error: bool = typer.Option(False, help="Stop at the first failing asset"),
+    only: list[str] = typer.Option(None, "--only", help="Run only these asset ids (repeatable)"),
+    fetch_only: bool = typer.Option(False, "--fetch-only", help="Download and inspect, no convert"),
 ) -> None:
-    """Convert every asset in a YAML config and write a report."""
+    """Fetch, inspect and convert every asset in a YAML config, and write a report."""
     from simready_mujoco.api import convert as _convert
     from simready_mujoco.fetch import resolve_asset
     from simready_mujoco.sim.load import summarize_mjcf
@@ -191,25 +203,42 @@ def batch(
     profile = cfg.get("sim_profile", "manipulation")
     results = []
 
-    for entry in cfg.get("assets", []):
+    assets = [e for e in cfg.get("assets", []) if not only or e["id"] in only]
+    for entry in assets:
         aid = entry["id"]
-        row: dict = {"id": aid, "category": entry.get("category"), "ok": False}
+        row: dict = {"id": aid, "category": entry.get("category"), "ok": False, "stage": "fetch"}
         try:
-            with console.status(f"{aid}: fetching / converting …"):
-                usd = resolve_asset(entry)
-                row["dropped_by_baseline"] = inspect_usd(usd).dropped_by_baseline
+            with console.status(f"{aid}: fetching …"):
+                res = resolve_asset(entry)
+            row.update(usd=str(res.usd), license=res.license, package_id=res.package_id)
+            row["stage"] = "inspect"
+            report_i = inspect_usd(res.usd)
+            row["dropped_by_baseline"] = report_i.dropped_by_baseline
+            (out_root / aid).mkdir(parents=True, exist_ok=True)
+            (out_root / aid / "inspection.json").write_text(
+                json.dumps(report_i.to_dict(), indent=2, default=str)
+            )
+            if fetch_only:
+                row["ok"] = True
+                console.print(f"[green]✓[/] {aid} (fetched + inspected)")
+                results.append(row)
+                continue
+            row["stage"] = "convert"
+            usd = res.usd
+            with console.status(f"{aid}: converting …"):
                 mjcf = _convert(
                     usd,
                     out_root / aid,
                     sim_profile=profile,
                     generate_collision=cfg.get("generate_collision", False),
                 )
-                row.update(summarize_mjcf(mjcf).to_dict(), ok=True)
+            row["stage"] = "load"
+            row.update(summarize_mjcf(mjcf).to_dict(), ok=True, stage="done")
             console.print(f"[green]✓[/] {aid}")
         except Exception as e:  # noqa: BLE001
             row["error"] = f"{type(e).__name__}: {e}"
             row["traceback"] = traceback.format_exc()
-            console.print(f"[red]✗[/] {aid}: {row['error']}")
+            console.print(f"[red]✗[/] {aid} (failed at {row['stage']}): {row['error']}")
             if stop_on_error:
                 raise
         results.append(row)
@@ -225,15 +254,18 @@ def batch(
         t.add_row(
             r["id"],
             str(r.get("category") or "-"),
-            "[green]✓[/]" if r["ok"] else "[red]✗[/]",
+            "[green]✓[/]" if r["ok"] else f"[red]✗ {r['stage']}[/]",
             str(r.get("bodies", "-")),
             str(r.get("joints", "-")),
             str(r.get("actuators", "-")),
-            f"{r['total_mass_kg']:.3f}" if r.get("ok") else "-",
+            f"{r['total_mass_kg']:.3f}" if "total_mass_kg" in r else "-",
             str(len(r.get("dropped_by_baseline", []))),
         )
     console.print(t)
-    console.print(f"Report: {report}")
+    licences = {r["id"]: r.get("license") for r in results if r.get("license")}
+    if licences:
+        console.print("Licences: " + ", ".join(f"{k}: {v}" for k, v in licences.items()))
+    console.print(f"Report: {report}  (per-asset inspection.json alongside)")
     if not all(r["ok"] for r in results):
         raise typer.Exit(1)
 

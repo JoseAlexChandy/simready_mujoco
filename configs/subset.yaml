@@ -1,35 +1,74 @@
-# Pilot subset: a few assets chosen so that together they exercise every USD -> MJCF mapping.
-# Add assets by giving either a local `path` or a Hugging Face `hf` source.
-# Fill in the real assets once we've browsed SimReady Central.
+# Pilot subset: real SimReady Central assets chosen so that together they exercise every
+# USD -> MJCF mapping in docs/usd_to_mjcf_mapping.md.
 #
-# Fields:
-#   id:        short unique name, used for the output folder
-#   category:  rigid | articulated | robot | gripper
-#   exercises: which mappings this asset is meant to test (see docs/usd_to_mjcf_mapping.md)
-#   path:      local USD file (relative to repo root), OR
-#   hf:        { repo: <org>/<dataset>, file: <path inside repo>, revision: <commit> }
+# To add an asset, copy its line from the SimReady Central index
+# (https://github.com/NVIDIA-Omniverse/simready-central/tree/main/submissions) into `simready:`.
+# URLs are pinned to a Hugging Face commit, so results are reproducible.
+#
+# Entry fields:
+#   id:         short unique name (output folder)
+#   category:   rigid | articulated | robot | gripper
+#   exercises:  mappings this asset is meant to test
+#   simready:   package URL from the index   (or `path:` for a local USD file)
+#   interface:  optional, root USD relative to the asset folder if auto-detection is ambiguous
+#
+# Index snapshot used: simready-central @ 12a12136 (2026-11-11)
 
 output_dir: outputs
 sim_profile: manipulation   # see src/simready_mujoco/sim_profiles.yaml
 generate_collision: true
 
 assets:
+  # --- synthetic control asset (always available, known ground truth) ---
   - id: example_cabinet
     category: articulated
-    exercises: [mass, materials, revolute, drives]
-    path: tests/fixtures/cabinet.usda   # synthetic test asset, always available
+    exercises: [mass, materials, revolute, prismatic, drives]
+    path: tests/fixtures/cabinet.usda
 
-  # --- TODO: replace with real SimReady Central assets ---
-  # - id: box_cardboard
-  #   category: rigid
-  #   exercises: [mass, materials, collision_primitives]
-  #   hf: { repo: <org>/<dataset>, file: <path/to/asset.usd>, revision: <commit> }
-  # - id: drawer_unit
-  #   category: articulated
-  #   exercises: [prismatic, limits]
-  # - id: robot_arm
+  # --- rigid props: mass, friction, collision ---
+  - id: box_cardboard_a01
+    category: rigid
+    exercises: [mass, materials, collision]
+    simready: https://huggingface.co/datasets/nvidia/simready-assets/resolve/653d91e182011f357cf1644013cc94ddf194d349/box_cardboard_a01/com.nvidia.simready.packaging.json
+  - id: box_cube_a01
+    category: rigid
+    exercises: [mass, collision_primitives]
+    simready: https://huggingface.co/datasets/nvidia/simready-assets/resolve/653d91e182011f357cf1644013cc94ddf194d349/box_cube_a01/com.nvidia.simready.packaging.json
+  - id: cup_paper_a01
+    category: rigid
+    exercises: [mass, thin_shell_inertia, convex_decomposition]
+    simready: https://huggingface.co/datasets/nvidia/simready-assets/resolve/653d91e182011f357cf1644013cc94ddf194d349/consumable_cup_paper_a01/com.nvidia.simready.packaging.json
+
+  # --- articulated objects: hinges, sliders, limits ---
+  - id: cabinet_file_a01
+    category: articulated
+    exercises: [prismatic, limits, mass]
+    simready: https://huggingface.co/datasets/nvidia/simready-assets/resolve/653d91e182011f357cf1644013cc94ddf194d349/cabinet_file_a01/com.nvidia.simready.packaging.json
+  - id: refrigerator_a01
+    category: articulated
+    exercises: [revolute, limits, joint_frames]
+    simready: https://huggingface.co/datasets/nvidia/simready-assets/resolve/653d91e182011f357cf1644013cc94ddf194d349/refrigerator_a01/com.nvidia.simready.packaging.json
+  - id: faucet_single_lever_a01
+    category: articulated
+    exercises: [revolute, d6_or_spherical]
+    simready: https://huggingface.co/datasets/nvidia/simready-assets/resolve/653d91e182011f357cf1644013cc94ddf194d349/fixture_faucet_singleLever_a01/com.nvidia.simready.packaging.json
+
+  # --- robots and grippers: drives, inertia, mimic joints, closed loops ---
+  - id: franka_fr3
+    category: robot
+    exercises: [drives, inertia, self_collision, joint_frames]
+    simready: https://huggingface.co/datasets/frankarobotics/simready-assets/resolve/b54ce583ec4266d4b980c3bbc55c1019107311af/fr3v2_1/com.nvidia.simready.packaging.json
+  - id: franka_hand
+    category: gripper
+    exercises: [drives, mimic]
+    simready: https://huggingface.co/datasets/frankarobotics/simready-assets/resolve/89b84c2e10b49f2ed5b056e08164ece2cfe0fb94/franka_hand/com.nvidia.simready.packaging.json
+  - id: robotiq_2f85
+    category: gripper
+    exercises: [mimic, closed_loop, drives]
+    simready: https://huggingface.co/datasets/Robotiq-Official/simready-assets/resolve/3c296ea93075d743e8ef9a0324d374b639d28123/Robotiq_2F_85/com.nvidia.simready.packaging.json
+
+  # --- optional extra robot, uncomment to include ---
+  # - id: ur_ur17
   #   category: robot
-  #   exercises: [drives, inertia, self_collision]
-  # - id: parallel_gripper
-  #   category: gripper
-  #   exercises: [mimic, closed_loop]
+  #   exercises: [drives, inertia]
+  #   simready: https://huggingface.co/datasets/TeradyneRobotics/UniversalRobots/resolve/d5d8eb795a487a5c929909bc337ee4834d62b0da/ur17g_1300/com.nvidia.simready.packaging.json

@@ -76,6 +76,8 @@ class InspectionReport:
     mesh_approximations: dict[str, int] = field(default_factory=dict)
     materials: list[dict[str, Any]] = field(default_factory=list)
     physx_schemas: list[str] = field(default_factory=list)
+    # Variant sets on the default prim, e.g. {"Physics": {"selected": "PhysX", "options": [...]}}
+    variants: dict[str, dict[str, Any]] = field(default_factory=dict)
     dropped_by_baseline: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -183,6 +185,16 @@ def inspect_usd(path: str | Path) -> InspectionReport:
     for prim in stage.Traverse():
         physx.update(s for s in prim.GetAppliedSchemas() if s.startswith("Physx"))
     report.physx_schemas = sorted(physx)
+
+    default = stage.GetDefaultPrim()
+    if default:
+        vsets = default.GetVariantSets()
+        for name in vsets.GetNames():
+            vs = vsets.GetVariantSet(name)
+            report.variants[name] = {
+                "selected": vs.GetVariantSelection(),
+                "options": list(vs.GetVariantNames()),
+            }
 
     report.dropped_by_baseline = _baseline_gaps(report)
     return report

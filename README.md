@@ -22,8 +22,11 @@ Then, with the environment active (`source .venv/bin/activate`):
 srmj inspect tests/fixtures/cabinet.usda          # what physics does the asset author?
 srmj convert tests/fixtures/cabinet.usda          # convert + check it loads and is stable
 srmj view outputs/cabinet/cabinet.xml              # look at it in the MuJoCo viewer
-srmj batch configs/subset.yaml                    # convert a whole list of assets
+srmj batch configs/subset.yaml                    # fetch + convert the pilot subset
+srmj batch configs/subset.yaml --only franka_fr3  # just one asset
 ```
+
+**Adding SimReady assets:** find the asset in the [SimReady Central index](https://github.com/NVIDIA-Omniverse/simready-central/tree/main/submissions) and copy its line into `configs/subset.yaml` as `simready: <url>`. Downloads are cached in `data/`.
 
 **In VS Code:** open the folder, accept the recommended extensions, then use *Run and Debug* (`F5`) → pick `srmj: inspect USD file`, `srmj: convert USD file`, etc. *Terminal → Run Task* has setup, test, lint and convert-subset.
 
