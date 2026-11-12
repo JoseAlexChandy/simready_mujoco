@@ -5,6 +5,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [SemVer](ht
 ## [Unreleased]
 
 ### Added
+- `srmj scene` / `make scene`: composes converted assets into one scene (floor, table, lights) with automatic placement from collision bounding boxes; big items on the floor, small ones on the table, fixed-base robots on the table edge; per-asset overrides in `configs/scene.yaml`; settle check reports anything that falls or slides.
 - **Native USD → MJCF backend** (now the default; `--backend upstream` keeps the baseline):
   kinematic tree from UsdPhysics joints with correct joint frames and `ref`; mass via USD's
   `ComputeMassProperties`; authored colliders (primitives + meshes) and visuals with material

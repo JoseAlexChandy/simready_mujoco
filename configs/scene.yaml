@@ -1,0 +1,22 @@
+# Scene composition for `srmj scene`: floor + table + converted assets.
+# Assets come from `assets_from`; each is looked up in <output_dir>/<id>/*.xml.
+
+assets_from: configs/subset.yaml
+output: outputs/scene/scene.xml
+sim_profile: manipulation
+
+table:
+  length: 1.4      # metres along x (grows automatically to fit the objects)
+  width: 0.8       # metres along y
+  height: 0.75     # tabletop height
+
+# Where each asset goes. Default is auto:
+#   floor (taller than 0.5 m or wider than 0.6 m), table (everything else),
+#   robot (fixed-base robots are mounted on the table's left end).
+# Override per asset id with: floor | table | robot | skip | [x, y, z]
+place:
+  example_cabinet: skip      # synthetic test asset
+
+# Optional rotation about the vertical axis, in degrees, per asset id
+yaw:
+  refrigerator_a01: 0

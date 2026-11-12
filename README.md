@@ -24,6 +24,7 @@ srmj convert tests/fixtures/cabinet.usda          # convert + check it loads and
 srmj view outputs/cabinet/cabinet.xml              # look at it in the MuJoCo viewer
 srmj batch configs/subset.yaml                    # fetch + convert the pilot subset
 srmj batch configs/subset.yaml --only franka_fr3  # just one asset
+make scene                                        # all converted assets on a floor + table
 ```
 
 **Adding SimReady assets:** find the asset in the [SimReady Central index](https://github.com/NVIDIA-Omniverse/simready-central/tree/main/submissions) and copy its line into `configs/subset.yaml` as `simready: <url>`. Downloads are cached in `data/`.
@@ -39,6 +40,7 @@ srmj batch configs/subset.yaml --only franka_fr3  # just one asset
 | `srmj convert FILE [-o DIR] [--collision] [--sim-profile NAME]` | Converts one asset, applies a MuJoCo simulation preset, verifies it loads and settles |
 | `srmj batch CONFIG.yaml` | Converts every asset in a config (local or Hugging Face), writes `outputs/batch_report.json` |
 | `srmj view FILE.xml` | Opens the interactive MuJoCo viewer |
+| `srmj scene [configs/scene.yaml] [--view]` | Puts converted assets in one scene: floor, table, big items on the floor, small items on the table, robots on the table edge; checks everything settles |
 | `srmj compare OURS.xml REF.xml` | Side-by-side masses, joints, actuators and a hold-pose test (e.g. vs Menagerie) |
 | `make roundtrip` | Validates the converter: Menagerie FR3 → USD → MJCF, compared with the original |
 

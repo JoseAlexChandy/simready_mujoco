@@ -1,7 +1,7 @@
 PY ?= .venv/bin/python
 SRMJ ?= .venv/bin/srmj
 
-.PHONY: help setup doctor test lint subset roundtrip clean
+.PHONY: help setup doctor test lint subset scene roundtrip clean
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
@@ -27,6 +27,9 @@ lint: ## Lint and format the code
 
 subset: ## Convert every asset listed in configs/subset.yaml
 	$(SRMJ) batch configs/subset.yaml
+
+scene: ## Put all converted assets on a floor + table and open the viewer
+	$(SRMJ) scene configs/scene.yaml --view
 
 roundtrip: ## Validate the converter: Menagerie FR3 -> USD -> MJCF, compared with the original
 	PATH="$(CURDIR)/.venv/bin:$$PATH" scripts/roundtrip_menagerie.sh

@@ -412,6 +412,75 @@ def compare_cmd(
 
 
 @app.command()
+def scene(
+    config: Path = typer.Argument(Path("configs/scene.yaml"), exists=True, help="Scene config"),
+    out: Path = typer.Option(None, "--out", "-o", help="Scene file (default from config)"),
+    open_viewer: bool = typer.Option(False, "--view", help="Open the scene in the viewer"),
+) -> None:
+    """Put converted assets in one scene: floor, table, objects placed automatically."""
+    from simready_mujoco.sim.scene import Item, TableSpec, build_scene
+
+    cfg = yaml.safe_load(config.read_text()) or {}
+    assets_cfg = yaml.safe_load(Path(cfg.get("assets_from", "configs/subset.yaml")).read_text())
+    out_root = Path(assets_cfg.get("output_dir", "outputs"))
+    place = cfg.get("place") or {}
+    yaw = cfg.get("yaw") or {}
+    items, missing = [], []
+    for entry in assets_cfg.get("assets", []):
+        aid = entry["id"]
+        if place.get(aid) == "skip":
+            continue
+        xmls = sorted((out_root / aid).glob("*.xml"))
+        if not xmls:
+            missing.append(aid)
+            continue
+        items.append(
+            Item(aid, str(xmls[0]), place.get(aid, "auto"), entry.get("category"), yaw.get(aid, 0.0))
+        )
+    if missing:
+        console.print(f"[yellow]Not converted yet (run srmj batch): {', '.join(missing)}[/]")
+    out_file = out or Path(cfg.get("output", out_root / "scene" / "scene.xml"))
+    table = TableSpec(**(cfg.get("table") or {}))
+    with console.status("Building scene and letting it settle …"):
+        rep = build_scene(items, out_file, table, cfg.get("sim_profile", "manipulation"))
+    (out_file.parent / "scene_report.json").write_text(json.dumps(dataclasses_asdict(rep), indent=2))
+
+    t = Table(title=f"Scene: {out_file}")
+    for c in ("Asset", "Placed on", "Position (x y z)", "Size (x y z) m"):
+        t.add_column(c)
+    for it in rep.items:
+        size = [hi - lo for lo, hi in zip(it["bbox_min"], it["bbox_max"], strict=False)]
+        t.add_row(
+            it["id"],
+            it["surface"],
+            " ".join(f"{v:.2f}" for v in it["pos"]),
+            " ".join(f"{v:.2f}" for v in size),
+        )
+    console.print(t)
+    console.print(
+        f"Table {rep.table['length']:.2f} × {rep.table['width']:.2f} m, "
+        f"top at {rep.table['height']:.2f} m"
+    )
+    for s in rep.settle:
+        mark = "[green]✓[/]" if s["ok"] else "[yellow]![/]"
+        console.print(
+            f"  {mark} {s['body']}: settled {s['drop_m'] * 1000:.0f} mm down, "
+            f"slid {s['slide_m'] * 1000:.0f} mm"
+        )
+    console.print(f"View it: [cyan]srmj view {out_file}[/]")
+    if open_viewer:
+        from simready_mujoco.sim.load import view as _view
+
+        _view(out_file)
+
+
+def dataclasses_asdict(obj):
+    import dataclasses
+
+    return dataclasses.asdict(obj)
+
+
+@app.command()
 def view(mjcf_file: Path = typer.Argument(..., exists=True, help="MJCF .xml file")) -> None:
     """Open an MJCF in the interactive MuJoCo viewer."""
     from simready_mujoco.sim.load import view as _view
