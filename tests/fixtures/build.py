@@ -127,3 +127,76 @@ if __name__ == "__main__":
     out.unlink(missing_ok=True)
     build_cabinet(out)
     print(f"wrote {out}")
+
+
+def build_runtime_variant_asset(asset_dir: Path) -> Path:
+    """SimReady-style multi-runtime prop: neutral base + PhysX / MuJoCo variant payloads.
+
+    Layout (as in SimReady Foundation):
+        <asset_dir>/simready_usd/prop.usda           root, default prim /prop
+        <asset_dir>/runnables/physics/physx.usda     PhysX layer  (PhysX=Enabled, the default)
+        <asset_dir>/runnables/physics/mujoco.usda    MuJoCo layer (MuJoCo=Enabled)
+    Also has a joint with an unregistered multi-apply mimic schema in the base.
+    """
+    from pxr import Sdf
+
+    phys = asset_dir / "runnables" / "physics"
+    phys.mkdir(parents=True, exist_ok=True)
+    root_dir = asset_dir / "simready_usd"
+    root_dir.mkdir(parents=True, exist_ok=True)
+
+    def runtime_layer(name: str, schema: str, attrs: dict, extra_prims: dict) -> None:
+        layer = Sdf.Layer.CreateNew(str(phys / f"{name}.usda"))
+        s = Usd.Stage.Open(layer)
+        over = s.OverridePrim("/prop/body/body_collision")
+        op = Sdf.TokenListOp()
+        op.prependedItems = [schema]
+        over.SetMetadata("apiSchemas", op)
+        for k, v in attrs.items():
+            over.CreateAttribute(k, Sdf.ValueTypeNames.Double).Set(v)
+        for path, type_name in extra_prims.items():
+            p = s.DefinePrim(path, type_name)
+            p.CreateAttribute("mjc:gainPrm", Sdf.ValueTypeNames.DoubleArray).Set([100.0])
+        s.SetDefaultPrim(s.GetPrimAtPath("/prop"))
+        layer.Save()
+
+    runtime_layer("physx", "PhysxCollisionAPI", {"physxCollision:contactOffset": 0.01}, {})
+    runtime_layer(
+        "mujoco",
+        "MjcCollisionAPI",
+        {"mjc:margin": 0.001},
+        {"/prop/actuators/hinge_motor": "MjcActuator"},
+    )
+
+    root = root_dir / "prop.usda"
+    stage = Usd.Stage.CreateNew(str(root))
+    UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+    prop = UsdGeom.Xform.Define(stage, "/prop").GetPrim()
+    stage.SetDefaultPrim(prop)
+    body = UsdGeom.Xform.Define(stage, "/prop/body").GetPrim()
+    UsdPhysics.RigidBodyAPI.Apply(body)
+    UsdPhysics.MassAPI.Apply(body).CreateMassAttr(0.5)
+    _box_mesh(stage, "/prop/body/body_visual", (0.1, 0.1, 0.1), (0, 0, 0))
+    c = _box_mesh(stage, "/prop/body/body_collision", (0.1, 0.1, 0.1), (0, 0, 0))
+    _collider(c.GetPrim(), "sdf")
+    lid = UsdGeom.Xform.Define(stage, "/prop/lid").GetPrim()
+    UsdPhysics.RigidBodyAPI.Apply(lid)
+    j = UsdPhysics.RevoluteJoint.Define(stage, "/prop/lid_hinge")
+    j.CreateBody0Rel().SetTargets([body.GetPath()])
+    j.CreateBody1Rel().SetTargets([lid.GetPath()])
+    op = Sdf.TokenListOp()
+    op.prependedItems = ["PhysxMimicJointAPI:rotZ"]
+    j.GetPrim().SetMetadata("apiSchemas", op)
+
+    vsets = prop.GetVariantSets()
+    for name, default in (("PhysX", "Enabled"), ("MuJoCo", "Disabled")):
+        vs = vsets.AddVariantSet(name)
+        for option in ("Disabled", "Enabled"):
+            vs.AddVariant(option)
+        vs.SetVariantSelection("Enabled")
+        with vs.GetVariantEditContext():
+            prop.GetPayloads().AddPayload(f"../runnables/physics/{name.lower()}.usda")
+        vs.SetVariantSelection(default)
+    stage.GetRootLayer().Save()
+    return root

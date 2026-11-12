@@ -15,6 +15,7 @@ from typing import Any
 from pxr import Usd, UsdGeom, UsdPhysics
 
 from simready_mujoco.usd.physics import parse_physics
+from simready_mujoco.usd.stage import applied_schemas, open_stage
 
 JOINT_KINDS = (
     "RevoluteJoint",
@@ -76,6 +77,13 @@ class InspectionReport:
     mesh_approximations: dict[str, int] = field(default_factory=dict)
     materials: list[dict[str, Any]] = field(default_factory=list)
     physx_schemas: list[str] = field(default_factory=list)
+    newton_schemas: list[str] = field(default_factory=list)
+    mjc_schemas: list[str] = field(default_factory=list)
+    mjc_prim_types: dict[str, int] = field(default_factory=dict)  # e.g. {"MjcActuator": 7}
+    mjc_attributes: list[str] = field(default_factory=list)  # distinct mjc:* attribute names
+    runtime: str = "authored"
+    runtime_available: bool | None = None
+    selection: dict[str, str] = field(default_factory=dict)
     # Variant sets on the default prim, e.g. {"Physics": {"selected": "PhysX", "options": [...]}}
     variants: dict[str, dict[str, Any]] = field(default_factory=dict)
     dropped_by_baseline: list[str] = field(default_factory=list)
@@ -121,7 +129,7 @@ def _joint_info(path: str, kind: str, desc: Any, stage: Usd.Stage) -> JointInfo:
             "acceleration": bool(drive.acceleration),
         }
     prim = stage.GetPrimAtPath(path)
-    info.mimic = any("Mimic" in s for s in prim.GetAppliedSchemas())
+    info.mimic = any("Mimic" in s for s in applied_schemas(prim))
     return info
 
 
@@ -137,12 +145,17 @@ def _body_info(path: str, desc: Any, stage: Usd.Stage) -> BodyInfo:
     return info
 
 
-def inspect_usd(path: str | Path) -> InspectionReport:
-    """Open a USD file and report the physics it authors."""
+def inspect_usd(
+    path: str | Path,
+    runtime: str = "mujoco",
+    variants: dict[str, str] | None = None,
+) -> InspectionReport:
+    """Open a USD file and report the physics it authors.
+
+    runtime/variants choose which physics variant is composed (see usd.stage.open_stage).
+    """
     path = Path(path)
-    stage = Usd.Stage.Open(str(path))
-    if stage is None:
-        raise ValueError(f"Could not open USD file: {path}")
+    stage, sel = open_stage(path, runtime=runtime, variants=variants)
 
     parsed = parse_physics(stage)
 
@@ -152,6 +165,9 @@ def inspect_usd(path: str | Path) -> InspectionReport:
         meters_per_unit=UsdGeom.GetStageMetersPerUnit(stage),
         kilograms_per_unit=UsdPhysics.GetStageKilogramsPerUnit(stage),
         has_physics_scene=bool(parsed.get("Scene")),
+        runtime=sel.runtime,
+        runtime_available=sel.runtime_available,
+        selection=sel.applied,
     )
     report.articulations = [p for p, _ in parsed.get("Articulation", [])]
     report.bodies = [_body_info(p, d, stage) for p, d in parsed.get("RigidBody", [])]
@@ -182,9 +198,29 @@ def inspect_usd(path: str | Path) -> InspectionReport:
         )
 
     physx: set[str] = set()
+    newton: set[str] = set()
+    mjc: set[str] = set()
+    mjc_types: Counter[str] = Counter()
+    mjc_attrs: set[str] = set()
     for prim in stage.Traverse():
-        physx.update(s for s in prim.GetAppliedSchemas() if s.startswith("Physx"))
+        for s in applied_schemas(prim):
+            base = s.split(":", 1)[0]  # multi-apply schemas look like "PhysxMimicJointAPI:rotZ"
+            if base.startswith("Physx"):
+                physx.add(base)
+            elif base.startswith("Newton"):
+                newton.add(base)
+            elif base.startswith("Mjc"):
+                mjc.add(base)
+        if prim.GetTypeName().startswith("Mjc"):
+            mjc_types[str(prim.GetTypeName())] += 1
+        mjc_attrs.update(
+            a.GetName() for a in prim.GetAuthoredAttributes() if a.GetName().startswith("mjc:")
+        )
     report.physx_schemas = sorted(physx)
+    report.newton_schemas = sorted(newton)
+    report.mjc_schemas = sorted(mjc)
+    report.mjc_prim_types = dict(mjc_types)
+    report.mjc_attributes = sorted(mjc_attrs)
 
     default = stage.GetDefaultPrim()
     if default:
@@ -218,6 +254,8 @@ def _baseline_gaps(r: InspectionReport) -> list[str]:
         gaps.append("mimic joints -> fingers move independently")
     if any(j.exclude_from_articulation for j in r.joints):
         gaps.append("loop-closing joints -> not represented")
+    if r.mjc_schemas or r.mjc_prim_types or r.mjc_attributes:
+        gaps.append("MuJoCo runtime layer (mjc:* actuators, contacts, options) -> ignored")
     if r.collider_shapes:
         gaps.append("authored colliders -> not exported (regenerated from visuals if requested)")
     return gaps

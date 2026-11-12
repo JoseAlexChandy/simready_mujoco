@@ -16,6 +16,9 @@
 
 output_dir: outputs
 sim_profile: manipulation   # see src/simready_mujoco/sim_profiles.yaml
+# Physics variant to compose: mujoco (MuJoCo=Enabled, PhysX/Newton=Disabled) | physx | newton | authored
+# Per-asset override: `runtime:` and/or `variants: {SET: OPTION}`.
+runtime: mujoco
 generate_collision: true
 
 assets:
@@ -66,6 +69,9 @@ assets:
     category: gripper
     exercises: [mimic, closed_loop, drives]
     simready: https://huggingface.co/datasets/Robotiq-Official/simready-assets/resolve/3c296ea93075d743e8ef9a0324d374b639d28123/Robotiq_2F_85/com.nvidia.simready.packaging.json
+    # No MuJoCo variant on this asset; it uses its own "Physics" set. Newton runs a MuJoCo
+    # solver, so its layer is the closest match. Compare with Physx_parallel_grip.
+    variants: { Physics: Newton_parallel_grip }
 
   # --- optional extra robot, uncomment to include ---
   # - id: ur_ur17

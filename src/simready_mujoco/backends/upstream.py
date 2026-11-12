@@ -63,13 +63,19 @@ def convert(
     generate_collision: bool = False,
     preprocess_resolution: int = 20,
     resolution: int = 2000,
+    stage=None,
 ) -> Path:
-    """Convert with upstream usd2mjcf. Returns the path of the written MJCF file."""
+    """Convert with upstream usd2mjcf. Returns the path of the written MJCF file.
+
+    Pass `stage` to convert an already-opened stage (e.g. with a physics variant selected);
+    otherwise `usd_file` is opened as authored.
+    """
     root = _ensure_importable()
     from lightwheel.srl.from_usd.to_mjcf import UsdToMjcf  # noqa: PLC0415
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    mjcf_file = Path(UsdToMjcf.init_from_file(str(usd_file)).save_to_file(str(out_dir)))
+    converter = UsdToMjcf(stage) if stage is not None else UsdToMjcf.init_from_file(str(usd_file))
+    mjcf_file = Path(converter.save_to_file(str(out_dir)))
 
     if generate_collision:
         mod = _load_upstream_utils(root).add_collision

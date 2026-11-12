@@ -23,6 +23,10 @@ Legend: ✅ done · 🟡 baseline only (upstream usd2mjcf) · 🔲 planned
 | Gravity | `PhysicsScene` | `<option gravity>` | 🔲 |
 | Solver settings | — (MuJoCo-specific) | presets in `src/simready_mujoco/sim_profiles.yaml` | ✅ |
 
+## Source priority (ADR 0002)
+
+SimReady assets carry a MuJoCo runtime layer (`MuJoCo=Enabled` → `runnables/physics/mujoco.usd`, `mjcPhysics` schema). Values authored there map 1:1 to MJCF and take priority. The UsdPhysics/PhysX translations in the table above are the fallback for assets or properties the MuJoCo layer doesn't cover.
+
 ## Known issues in the upstream baseline
 
 Found on `tests/fixtures/cabinet.usda` (2 kg authored base). Each has an `xfail` test in `tests/test_baseline_upstream.py`.

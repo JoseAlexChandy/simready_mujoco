@@ -9,6 +9,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [SemVer](ht
 - `simready:` config entries: paste a package URL from the SimReady Central index; the fetcher downloads that commit and finds the root USD.
 - `srmj batch --only ID` and `--fetch-only`; per-asset `inspection.json`; licence and failing stage in the batch report.
 - `srmj inspect` reports USD variant sets (SimReady physics can live in a variant).
+- Physics runtime selection: `--runtime mujoco|physx|newton|authored` (default `mujoco`) and `--variant SET=OPTION` on `inspect` and `convert`; `runtime:`/`variants:` in batch configs. Selections are made in memory, never written to the asset.
+- `inspect` reports PhysX, Newton and MuJoCo (`Mjc*`) schemas, `MjcActuator`-type prims and `mjc:*` attributes; batch table shows what the MuJoCo layer contains.
+- Third-party log output (upstream converter, CoACD) goes to `<output>/convert.log`; `--verbose` to show it.
+- ADR 0002: use the asset's MuJoCo runtime layer as the primary source.
+
+### Fixed
+- Schemas without an installed plugin (all PhysX and mjcPhysics schemas) were invisible because `GetAppliedSchemas()` drops them; mimic joints were missed as a result.
 
 ### Fixed
 - Tests no longer break when ROS 2 is sourced (`PYTHONPATH` cleared in `make test`).

@@ -21,6 +21,9 @@ app = typer.Typer(
 )
 console = Console()
 
+RUNTIME_HELP = "Physics variant to compose: mujoco | physx | newton | authored (file default)"
+VARIANT_HELP = "Extra variant selection SET=OPTION, repeatable (e.g. Physics=Newton_parallel_grip)"
+
 
 @app.command()
 def version() -> None:
@@ -72,11 +75,14 @@ def doctor() -> None:
 def inspect(
     usd_file: Path = typer.Argument(..., exists=True, help="USD file to inspect"),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON"),
+    runtime: str = typer.Option("mujoco", "--runtime", "-r", help=RUNTIME_HELP),
+    variant: list[str] = typer.Option(None, "--variant", "-v", help=VARIANT_HELP),
 ) -> None:
     """Show which physics properties an asset authors, and what the baseline converter drops."""
     from simready_mujoco.usd.inspect import inspect_usd
+    from simready_mujoco.usd.stage import parse_variant_args
 
-    r = inspect_usd(usd_file)
+    r = inspect_usd(usd_file, runtime=runtime, variants=parse_variant_args(variant))
     if as_json:
         print(json.dumps(r.to_dict(), indent=2, default=str))
         return
@@ -88,6 +94,9 @@ def inspect(
         f"[cyan]{'yes' if r.has_physics_scene else 'no'}[/] · "
         f"articulations [cyan]{len(r.articulations)}[/]"
     )
+    if r.runtime != "authored":
+        avail = "" if r.runtime_available else " [yellow](asset has no variant for it)[/]"
+        console.print(f"runtime [cyan]{r.runtime}[/]{avail} · selection {r.selection or '{}'}")
 
     if r.bodies:
         t = Table(title="Rigid bodies")
@@ -134,8 +143,17 @@ def inspect(
             f"Material {m['path']}: static μ {m['static_friction']:g}, dynamic μ "
             f"{m['dynamic_friction']:g}, restitution {m['restitution']:g}"
         )
-    if r.physx_schemas:
-        console.print(f"PhysX schemas: {', '.join(r.physx_schemas)}")
+    for label, items in (
+        ("PhysX schemas", r.physx_schemas),
+        ("Newton schemas", r.newton_schemas),
+        ("MuJoCo schemas", r.mjc_schemas),
+    ):
+        if items:
+            console.print(f"{label}: {', '.join(items)}")
+    if r.mjc_prim_types:
+        console.print(f"MuJoCo prims: {r.mjc_prim_types}")
+    if r.mjc_attributes:
+        console.print(f"mjc:* attributes ({len(r.mjc_attributes)}): {', '.join(r.mjc_attributes)}")
     for name, v in r.variants.items():
         console.print(
             f"Variant set [cyan]{name}[/]: selected [cyan]{v['selected'] or '(none)'}[/] "
@@ -162,20 +180,27 @@ def convert(
     ),
     collision: bool = typer.Option(False, "--collision", help="Generate convex collision meshes"),
     backend: str = typer.Option("upstream", help="Conversion backend"),
+    runtime: str = typer.Option("mujoco", "--runtime", "-r", help=RUNTIME_HELP),
+    variant: list[str] = typer.Option(None, "--variant", "-v", help=VARIANT_HELP),
+    verbose: bool = typer.Option(False, "--verbose", help="Show third-party log output"),
 ) -> None:
     """Convert one USD asset to MJCF and check it loads in MuJoCo."""
     from simready_mujoco.api import convert as _convert
     from simready_mujoco.sim.load import summarize_mjcf
+    from simready_mujoco.usd.stage import parse_variant_args
 
     out_dir = out / usd_file.stem
-    with console.status(f"Converting {usd_file.name} …"):
-        mjcf = _convert(
-            usd_file,
-            out_dir,
-            sim_profile=None if sim_profile == "none" else sim_profile,
-            generate_collision=collision,
-            backend=backend,
-        )
+    console.print(f"Converting {usd_file.name} (runtime {runtime}) …")
+    mjcf = _convert(
+        usd_file,
+        out_dir,
+        sim_profile=None if sim_profile == "none" else sim_profile,
+        generate_collision=collision,
+        backend=backend,
+        runtime=runtime,
+        variants=parse_variant_args(variant),
+        quiet=not verbose,
+    )
     s = summarize_mjcf(mjcf)
     console.print(f"[green]✓[/] {mjcf}")
     console.print(
@@ -191,6 +216,7 @@ def batch(
     stop_on_error: bool = typer.Option(False, help="Stop at the first failing asset"),
     only: list[str] = typer.Option(None, "--only", help="Run only these asset ids (repeatable)"),
     fetch_only: bool = typer.Option(False, "--fetch-only", help="Download and inspect, no convert"),
+    verbose: bool = typer.Option(False, "--verbose", help="Show third-party log output"),
 ) -> None:
     """Fetch, inspect and convert every asset in a YAML config, and write a report."""
     from simready_mujoco.api import convert as _convert
@@ -201,6 +227,7 @@ def batch(
     cfg = yaml.safe_load(config.read_text())
     out_root = Path(cfg.get("output_dir", "outputs"))
     profile = cfg.get("sim_profile", "manipulation")
+    default_runtime = cfg.get("runtime", "mujoco")
     results = []
 
     assets = [e for e in cfg.get("assets", []) if not only or e["id"] in only]
@@ -212,7 +239,16 @@ def batch(
                 res = resolve_asset(entry)
             row.update(usd=str(res.usd), license=res.license, package_id=res.package_id)
             row["stage"] = "inspect"
-            report_i = inspect_usd(res.usd)
+            rt = entry.get("runtime", default_runtime)
+            vs = entry.get("variants") or {}
+            report_i = inspect_usd(res.usd, runtime=rt, variants=vs)
+            row.update(
+                runtime=rt,
+                runtime_available=report_i.runtime_available,
+                selection=report_i.selection,
+                mjc_schemas=report_i.mjc_schemas,
+                mjc_prim_types=report_i.mjc_prim_types,
+            )
             row["dropped_by_baseline"] = report_i.dropped_by_baseline
             (out_root / aid).mkdir(parents=True, exist_ok=True)
             (out_root / aid / "inspection.json").write_text(
@@ -224,14 +260,16 @@ def batch(
                 results.append(row)
                 continue
             row["stage"] = "convert"
-            usd = res.usd
-            with console.status(f"{aid}: converting …"):
-                mjcf = _convert(
-                    usd,
-                    out_root / aid,
-                    sim_profile=profile,
-                    generate_collision=cfg.get("generate_collision", False),
-                )
+            console.print(f"  {aid}: converting …")
+            mjcf = _convert(
+                res.usd,
+                out_root / aid,
+                sim_profile=profile,
+                generate_collision=cfg.get("generate_collision", False),
+                runtime=rt,
+                variants=vs,
+                quiet=not verbose,
+            )
             row["stage"] = "load"
             row.update(summarize_mjcf(mjcf).to_dict(), ok=True, stage="done")
             console.print(f"[green]✓[/] {aid}")
@@ -248,13 +286,24 @@ def batch(
     report.write_text(json.dumps(results, indent=2, default=str))
 
     t = Table(title="Batch results")
-    for c in ("Asset", "Category", "OK", "Bodies", "Joints", "Actuators", "Mass kg", "Lost"):
+    for c in (
+        "Asset",
+        "Category",
+        "OK",
+        "MuJoCo layer",
+        "Bodies",
+        "Joints",
+        "Act.",
+        "Mass kg",
+        "Lost",
+    ):
         t.add_column(c)
     for r in results:
         t.add_row(
             r["id"],
             str(r.get("category") or "-"),
             "[green]✓[/]" if r["ok"] else f"[red]✗ {r['stage']}[/]",
+            _mjc_cell(r),
             str(r.get("bodies", "-")),
             str(r.get("joints", "-")),
             str(r.get("actuators", "-")),
@@ -268,6 +317,16 @@ def batch(
     console.print(f"Report: {report}  (per-asset inspection.json alongside)")
     if not all(r["ok"] for r in results):
         raise typer.Exit(1)
+
+
+def _mjc_cell(r: dict) -> str:
+    """Short summary of the MuJoCo runtime layer for the batch table."""
+    if r.get("runtime") != "mujoco":
+        return r.get("runtime") or "-"
+    if not r.get("runtime_available"):
+        return "[yellow]none[/]"
+    n_prims = sum((r.get("mjc_prim_types") or {}).values())
+    return f"{len(r.get('mjc_schemas') or [])} API, {n_prims} prims"
 
 
 @app.command()
