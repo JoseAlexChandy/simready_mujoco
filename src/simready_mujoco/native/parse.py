@@ -582,6 +582,11 @@ def _geom_from_prim(
         if arrays is None:
             ctx.model.warnings.append(f"{prim.GetPath()}: empty mesh, skipped")
             return None
+        if len(np.unique(arrays[0], axis=0)) < 4:
+            ctx.model.warnings.append(
+                f"{prim.GetPath()}: mesh has fewer than 4 vertices (MuJoCo minimum), skipped"
+            )
+            return None
         mname = _mesh_name(ctx, prim, scale, arrays)
         g = Geom(gname, ShapeType.MESH, Pose(pos, quat), mesh=mname)
         md = ctx.model.meshes[mname]

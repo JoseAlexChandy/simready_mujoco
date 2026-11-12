@@ -200,3 +200,50 @@ def test_fixed_tendon_and_tendon_actuator(tmp_path):
     grip = m.actuator("grip")
     assert int(m.actuator_trntype[grip.id]) == int(mujoco.mjtTrn.mjTRN_TENDON)
     assert m.actuator_gainprm[grip.id, 0] == pytest.approx(2.0)
+
+
+# --- mesh robustness (found on real SimReady assets) ---------------------------------
+
+
+def _add_visual_mesh(usd_path, prim_path, vertices, faces):
+    from pxr import Gf, Usd, UsdGeom, Vt
+
+    stage = Usd.Stage.Open(str(usd_path))
+    mesh = UsdGeom.Mesh.Define(stage, prim_path)
+    mesh.CreatePointsAttr(Vt.Vec3fArray([Gf.Vec3f(*map(float, v)) for v in vertices]))
+    mesh.CreateFaceVertexCountsAttr([3] * len(faces))
+    mesh.CreateFaceVertexIndicesAttr([int(i) for f in faces for i in f])
+    stage.GetRootLayer().Save()
+
+
+def test_open_visual_mesh_loads(cabinet_usd, tmp_path):
+    # A flat, open mesh has no volume; MuJoCo refuses it unless mesh inertia is "shell".
+    # (FR3_Version2_Link5 in the SimReady Franka FR3.)
+    square = [(0, 0, 0), (0.1, 0, 0), (0.1, 0.1, 0), (0, 0.1, 0)]
+    _add_visual_mesh(cabinet_usd, "/cabinet/door/door_logo", square, [(0, 1, 2), (0, 2, 3)])
+    m, _ = _load(convert(cabinet_usd, tmp_path / "o"))
+    assert m.body("base").mass[0] == pytest.approx(2.0)
+    assert any(m.mesh(i).name.startswith("door_logo") for i in range(m.nmesh))
+
+
+def test_tiny_mesh_skipped_with_warning(cabinet_usd, tmp_path):
+    # MuJoCo needs >= 4 vertices per mesh
+    _add_visual_mesh(
+        cabinet_usd, "/cabinet/door/speck", [(0, 0, 0), (0.01, 0, 0), (0, 0.01, 0)], [(0, 1, 2)]
+    )
+    out = convert(cabinet_usd, tmp_path / "o")
+    _load(out)
+    report = json.loads((out.parent / "conversion_report.json").read_text())
+    assert any("speck" in w and "4 vertices" in w for w in report["warnings"])
+
+
+def test_very_large_mesh_loads(cabinet_usd, tmp_path):
+    # MuJoCo's STL reader caps at 200k faces (SimReady refrigerator_a01).
+    import trimesh
+
+    big = trimesh.creation.icosphere(subdivisions=7, radius=0.05)  # ~327k faces
+    assert len(big.faces) > 200_000
+    _add_visual_mesh(cabinet_usd, "/cabinet/base/big_detail", big.vertices, big.faces)
+    m, _ = _load(convert(cabinet_usd, tmp_path / "o"))
+    big_mesh = [i for i in range(m.nmesh) if m.mesh(i).name.startswith("big_detail")]
+    assert big_mesh and m.mesh_facenum[big_mesh[0]] == len(big.faces)

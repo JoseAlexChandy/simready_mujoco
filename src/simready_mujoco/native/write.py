@@ -10,6 +10,7 @@ import numpy as np
 
 from simready_mujoco.ir import Geom, JointType, MeshData, Model, ShapeType
 
+STL_MAX_FACES = 200_000  # MuJoCo's STL reader limit; larger meshes are written as OBJ
 VISUAL_GROUP = 2
 COLLISION_GROUP = 3
 
@@ -45,6 +46,16 @@ def write_stl(path: Path, md: MeshData) -> None:
         fh.write(b"simready-mujoco".ljust(80, b"\0"))
         fh.write(struct.pack("<I", len(f)))
         fh.write(rec.tobytes())
+
+
+def write_obj(path: Path, md: MeshData) -> None:
+    """Wavefront OBJ (no face limit in MuJoCo)."""
+    v = np.asarray(md.vertices, dtype=np.float64)
+    f = np.asarray(md.faces, dtype=np.int64) + 1
+    with open(path, "w") as fh:
+        fh.write("# simready-mujoco\n")
+        np.savetxt(fh, v, fmt="v %.7g %.7g %.7g")
+        np.savetxt(fh, f, fmt="f %d %d %d")
 
 
 def _geom_el(parent: ET.Element, g: Geom) -> None:
@@ -97,9 +108,16 @@ def write_mjcf(model: Model, out_dir: str | Path) -> Path:
 
     asset = ET.SubElement(root, "asset")
     for md in model.meshes.values():
-        write_stl(mesh_dir / f"{md.name}.stl", md)
-        el = ET.SubElement(asset, "mesh", name=md.name, file=f"{md.name}.stl")
-        _set(el, maxhullvert=md.maxhullvert, inertia=md.inertia)
+        if len(md.faces) > STL_MAX_FACES:
+            fname = f"{md.name}.obj"
+            write_obj(mesh_dir / fname, md)
+        else:
+            fname = f"{md.name}.stl"
+            write_stl(mesh_dir / fname, md)
+        el = ET.SubElement(asset, "mesh", name=md.name, file=fname)
+        # Masses always come from explicit <inertial>, so mesh volumes are never needed; "shell"
+        # stops MuJoCo rejecting open (non-watertight) visual meshes. An authored mode wins.
+        _set(el, maxhullvert=md.maxhullvert, inertia=md.inertia or "shell")
 
     world = ET.SubElement(root, "worldbody")
     for g in model.world_geoms:

@@ -18,6 +18,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [SemVer](ht
   FR3, UR5e, Kinova Gen3 and Robotiq 2F-85 match Menagerie (see docs/validation.md).
 - ADR 0003 (native backend semantics); docs/validation.md.
 
+### Fixed (found on real SimReady assets)
+- Meshes over 200k faces are written as OBJ (MuJoCo's STL reader limit; refrigerator_a01).
+- Mesh assets use `inertia="shell"` so open visual meshes load (FR3 link 5); masses always come from explicit inertials.
+- Meshes with fewer than 4 vertices are skipped with a warning.
+
 ### Changed
 - Asset-authored MuJoCo options now take precedence over simulation presets.
 - Batch table shows conversion warnings; Hugging Face progress bars silenced.
