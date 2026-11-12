@@ -19,7 +19,7 @@ doctor: ## Check that every dependency is installed and working
 	$(SRMJ) doctor
 
 test: ## Run the test suite
-	$(PY) -m pytest
+	env -u PYTHONPATH $(PY) -m pytest
 
 lint: ## Lint and format the code
 	.venv/bin/ruff check --fix src tests
