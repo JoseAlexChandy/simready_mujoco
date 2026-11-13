@@ -78,3 +78,39 @@ assets:
   #   category: robot
   #   exercises: [drives, inertia]
   #   simready: https://huggingface.co/datasets/TeradyneRobotics/UniversalRobots/resolve/d5d8eb795a487a5c929909bc337ee4834d62b0da/ur17g_1300/com.nvidia.simready.packaging.json
+  - id: kitchenware_mug_d01
+    category: object
+    path: /home/jose/simready-mujoco/data/koyo/kitchenware_mug_d01/kitchenware_mug_d01/simready_usd/sm_kitchenware_mug_d01_01.usd
+  - id: kitchenware_mug_e01
+    category: object
+    path: /home/jose/simready-mujoco/data/koyo/kitchenware_mug_e01/kitchenware_mug_e01/simready_usd/sm_kitchenware_mug_e01_01.usd
+  - id: laptop_16z90tl
+    category: object
+    path: /home/jose/simready-mujoco/data/koyo/laptop_16z90tl/laptop_16z90tl/simready_usd/laptop_16z90tl.usd
+  - id: measurement_clock_alarm_a01
+    category: object
+    path: /home/jose/simready-mujoco/data/koyo/measurement_clock_alarm_a01/measurement_clock_alarm_a01/simready_usd/sm_measurement_clock_alarm_a01_01.usd
+  - id: microwave_oven
+    category: object
+    path: /home/jose/simready-mujoco/data/koyo/microwave_oven/microwave_oven/simready_usd/microwave_oven.usda
+  - id: powertool_impact_wrench_b01
+    category: object
+    path: /home/jose/simready-mujoco/data/koyo/powerTool_impact_wrench_b01/powerTool_impact_wrench_b01/simready_usd/sm_powerTool_impact_wrench_b01_01.usd
+  - id: tool_hammer_a03
+    category: object
+    path: /home/jose/simready-mujoco/data/koyo/tool_hammer_a03/tool_hammer_a03/simready_usd/sm_tool_hammer_a03_01.usd
+  - id: d00146
+    category: object
+    path: /home/jose/simready-mujoco/data/koyo/D00146/D00146/simready_usd/D00146.usd
+  - id: d00153
+    category: object
+    path: /home/jose/simready-mujoco/data/koyo/D00153/D00153/simready_usd/D00153.usd
+  - id: air_fryer
+    category: object
+    path: /home/jose/simready-mujoco/data/koyo/air_fryer/air_fryer/simready_usd/air_fryer.usda
+  - id: food_beverage_bottledwater_l01
+    category: object
+    path: /home/jose/simready-mujoco/data/koyo/food_beverage_bottledWater_l01/food_beverage_bottledWater_l01/simready_usd/sm_food_beverage_bottledWater_l01_01.usd
+  - id: food_beverage_coffeecup_o01
+    category: object
+    path: /home/jose/simready-mujoco/data/koyo/food_beverage_coffeeCup_o01/food_beverage_coffeeCup_o01/simready_usd/sm_food_beverage_coffeeCup_o01_01.usd
