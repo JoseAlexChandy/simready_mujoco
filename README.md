@@ -31,6 +31,15 @@ make doctor       # every line should show ✓
 make test         # all tests should pass
 ```
 
+**Get the converted assets (optional, ~1 GB download).** The repo holds code only. The converted models, the kitchen scene and Koyo's downloaded assets are published as a GitHub Release:
+
+```bash
+make fetch-assets     # downloads, checks and unpacks into outputs/ and data/
+srmj view outputs/scene/scene.xml
+```
+
+Skip this to start from your own USD files (sections 3–4). Licences and sources for every asset are in `outputs/ATTRIBUTION.md`; all are CC-BY-4.0.
+
 Every later step assumes you're in the repo folder with the environment active. Your prompt should start with `(.venv)`. **Open a new terminal → run `cd simready-mujoco && source .venv/bin/activate` first.**
 
 > Using ROS? Its `PYTHONPATH` can shadow packages. `make test` already unsets it; for your own commands, run `unset PYTHONPATH` once per terminal.
@@ -277,6 +286,8 @@ The scene's "hand feel" is added by `srmj scene` and isn't stored in the object 
 | `scripts/unpack.sh SRC [DEST]` | unzips downloaded archives into `data/` |
 | `scripts/contact_sheet.py` | renders every converted asset into one labelled picture |
 | `scripts/mass_probe.py ID` | compares an asset's authored mass with its hull and its real shape |
+| `make fetch-assets` | downloads the newest `assets-*` release into `outputs/` and `data/` |
+| `make pack` / `make release` | packs `outputs/` and `data/koyo` (with attribution and checksums) and uploads them as a GitHub Release |
 
 ### Python API
 
@@ -312,6 +323,16 @@ outputs/                 conversion results and scenes (git-ignored)
 
 What changed and why is recorded in [CHANGELOG.md](CHANGELOG.md), including every fix found on real assets. To contribute, see [CONTRIBUTING.md](CONTRIBUTING.md): branches `feat/…`, conventional commits, and tests for every change.
 
+### Publishing new assets
+
+After converting more assets, share them with:
+
+```bash
+make release          # packs dist/ and creates GitHub Release assets-YYYY-MM-DD (needs gh)
+```
+
+The archives are split under GitHub's 2 GB file limit. `ATTRIBUTION.md`, generated from each asset's package info, is included, as CC-BY requires. SimReady assets added by link aren't packed, because `srmj batch` downloads them again. Clones get the new release with `make fetch-assets`.
+
 ## Licence
 
-Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). SimReady assets are **not** included; each has its own licence set by its publisher (`srmj batch` prints them).
+Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). SimReady assets are **not** in the repository. They're published separately as release files (`make fetch-assets`), each under the licence set by its publisher, listed in `ATTRIBUTION.md`.

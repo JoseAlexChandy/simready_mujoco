@@ -5,6 +5,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [SemVer](ht
 ## [Unreleased]
 
 ### Added
+- Sharing the converted assets: `make pack` / `make release` pack `outputs/` and `data/koyo` into gzip archives split under GitHub's 2 GB limit, with SHA256 checksums and a generated `ATTRIBUTION.md` (licence, package and source per asset, plus a note of the changes, as CC-BY-4.0 requires), and upload them as a GitHub Release `assets-YYYY-MM-DD`. `make fetch-assets` (`scripts/fetch_assets.sh`) downloads the newest one into a clone with curl only, checks the checksums and unpacks it. Packing refuses a config with machine-specific absolute paths.
 - README rewritten as a step-by-step guide for a fresh clone: install, convert one asset, convert many (zips or SimReady links), build the scene, viewer and keyboard controls, use the objects in your own MuJoCo environment, troubleshooting.
 - `place_asset(spec, mjcf, pos, yaw_deg)` / `load_asset(mjcf)`: put converted objects into your own MjSpec with mesh and texture paths fixed. Names are prefixed with the asset id, and the assets' solver settings are adopted when the environment keeps MuJoCo's defaults (no attach warnings).
 - `scripts/unpack.sh`: unzip downloaded asset archives into `data/`.

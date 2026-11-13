@@ -36,3 +36,6 @@ outputs/
 MUJOCO_LOG.TXT
 parts.txt
 material_report.txt
+
+# Release download cache (make fetch-assets)
+.assets_download/
