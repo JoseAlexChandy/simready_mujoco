@@ -49,7 +49,6 @@ def summarize_mjcf(mjcf_file: str | Path, settle_seconds: float = 1.0) -> ModelS
 
 def view(mjcf_file: str | Path) -> None:
     """Open the interactive MuJoCo viewer (needs a display)."""
-    import mujoco.viewer  # noqa: PLC0415
+    from simready_mujoco.sim.viewer import view as _view  # noqa: PLC0415
 
-    model = mujoco.MjModel.from_xml_path(str(mjcf_file))
-    mujoco.viewer.launch(model)
+    _view(mjcf_file)

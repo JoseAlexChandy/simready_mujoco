@@ -577,7 +577,10 @@ def scene(
         "  Ctrl + right-drag        lift / move it (vertical plane facing you)\n"
         "  Ctrl + Shift + right-drag  slide it along the floor\n"
         "  Ctrl + left-drag         twist it  ·  doors, lids and knobs: drag the part itself\n"
-        "  Space pauses · Backspace resets[/]"
+        "  Space pauses · Backspace resets\n"
+        "Keyboard placement of the selected object:\n"
+        "  Home/End  Insert/Delete  PgUp/PgDn   move away/towards, left/right, up/down\n"
+        "  F9 move <-> rotate (tilt, turn, roll)   F10 step size   F12 original orientation[/]"
     )
     if open_viewer:
         from simready_mujoco.sim.load import view as _view

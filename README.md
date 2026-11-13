@@ -29,6 +29,16 @@ make scene                                        # all converted assets on a fl
 
 **Moving things in the viewer:** double-click an object or part to select it, then **Ctrl + right-drag** to lift and move it, **Ctrl + Shift + right-drag** to slide it along the floor, and **Ctrl + left-drag** to twist it. Doors, lids and drawers stay where you leave them. For assets that ship as one rigid piece, list the parts that should move under `articulation:` (see [docs/articulation.md](docs/articulation.md)).
 
+**Placing objects with the keyboard:** double-click an object (or any of its parts), then:
+
+| keys | move mode (default) | rotate mode (F9) |
+|---|---|---|
+| Home / End | away from / towards the camera | tilt forward / back |
+| Insert / Delete | left / right | turn left / right |
+| Page Up / Page Down | up / down | roll left / right |
+
+F10 cycles the step size (5 mm/1°, 2 cm/5°, 10 cm/15°), and F12 restores the object's original orientation. Directions follow the camera. Pause first (Space) to place objects precisely; otherwise they settle under gravity as you move them. The terminal shows the object's position and yaw/pitch/roll after each key press.
+
 **Adding downloaded assets:** `srmj add ~/Downloads/<folder>` → `srmj batch configs/subset.yaml --only <id>` → `make scene`.
 
 **Adding SimReady assets:** find the asset in the [SimReady Central index](https://github.com/NVIDIA-Omniverse/simready-central/tree/main/submissions) and copy its line into `configs/subset.yaml` as `simready: <url>`. Downloads are cached in `data/`.
