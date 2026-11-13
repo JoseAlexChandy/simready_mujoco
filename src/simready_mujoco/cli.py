@@ -489,6 +489,7 @@ def scene(
         Item,
         SheetSpec,
         TableSpec,
+        TextureSpec,
         build_scene,
     )
 
@@ -527,6 +528,7 @@ def scene(
             sheet=SheetSpec(**sheet_cfg),
             include_robots=bool(cfg.get("robots", False)),
             articulation=ArticulationSpec(**(cfg.get("articulation") or {})),
+            textures=TextureSpec(**(cfg.get("textures") or {})),
         )
     (out_file.parent / "scene_report.json").write_text(
         json.dumps(dataclasses_asdict(rep), indent=2)
@@ -556,6 +558,10 @@ def scene(
             f"[dim]Robots/grippers left out (set robots: true in the scene config): "
             f"{', '.join(rep.skipped_robots)}[/]"
         )
+    console.print(
+        f"[dim]Textures: {rep.textures} in the scene, {rep.texture_mb:.0f} MB in memory "
+        "(textures: max_size in the scene config)[/]"
+    )
     if rep.nested:
         console.print(f"[dim]{len(rep.nested)} items placed on/in other objects[/]")
     for msg in rep.nesting_problems:

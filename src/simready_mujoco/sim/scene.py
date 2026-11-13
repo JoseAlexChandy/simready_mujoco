@@ -54,6 +54,16 @@ class SheetSpec:
 
 
 @dataclass
+class TextureSpec:
+    """Textures in the composed scene. Every texture costs width x height x 3 bytes of RAM
+    (a 2048 px texture is 12 MB), and a kitchen of 60 assets can hold hundreds, so the scene
+    uses scaled-down copies (cached next to the scene). The converted assets keep theirs."""
+
+    enabled: bool = True  # false: plain colours only (lowest memory)
+    max_size: int = 1024  # px, longest side; 0 keeps the originals
+
+
+@dataclass
 class ArticulationSpec:
     """How moving parts of objects behave when dragged in the viewer (scene only; the
     converted asset files keep everything, motors included)."""
@@ -122,6 +132,8 @@ class SceneReport:
     held_joints: int = 0
     nested: list[dict] = field(default_factory=list)
     nesting_problems: list[str] = field(default_factory=list)
+    texture_mb: float = 0.0
+    textures: int = 0
 
 
 def _bbox(m: mujoco.MjModel) -> tuple[np.ndarray, np.ndarray]:
@@ -168,7 +180,7 @@ def layout(items: list[Item], table: TableSpec) -> list[Item]:
             continue
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            m = mujoco.MjModel.from_xml_path(it.mjcf)
+            m = geometry_model(it.mjcf)
         lo, hi = _bbox(m)
         it.bbox_min, it.bbox_max = tuple(lo), tuple(hi)
         size = hi - lo
@@ -229,7 +241,7 @@ def layout_sheet(items: list[Item], sheet: SheetSpec) -> list[Item]:
             continue
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            m = mujoco.MjModel.from_xml_path(it.mjcf)
+            m = geometry_model(it.mjcf)
         lo, hi = _bbox(m)
         it.bbox_min, it.bbox_max = tuple(lo), tuple(hi)
         if isinstance(it.place, (list, tuple)):
@@ -365,7 +377,7 @@ def _joint_dynamics(mjcf: str) -> dict[str, tuple[float, float]]:
     torque or force on it). Inertia from the joint-space mass matrix diagonal."""
     from simready_mujoco.sim.stability import _full_mass_matrix  # noqa: PLC0415
 
-    m = mujoco.MjModel.from_xml_path(mjcf)
+    m = geometry_model(mjcf)
     d = mujoco.MjData(m)
     mujoco.mj_forward(m, d)
     full = np.zeros((m.nv, m.nv))
@@ -450,7 +462,7 @@ def _momentary(child: mujoco.MjSpec, mjcf: str, art: ArticulationSpec, dyn: dict
     at 0.8 of critical, no friction (it would hold a light button in place)."""
     if not art.momentary:
         return []
-    m = mujoco.MjModel.from_xml_path(mjcf)
+    m = geometry_model(mjcf)
     driven = {
         a.target
         for a in child.actuators
@@ -501,18 +513,76 @@ def _hold_against_gravity(
     return n
 
 
-def _absolute_meshes(child: mujoco.MjSpec, child_xml: Path) -> None:
-    """Point mesh and texture files at their real location (absolute) before attaching."""
+def _strip_textures(spec: mujoco.MjSpec) -> None:
+    """Remove textures (materials keep their colours)."""
+    for tex in list(spec.textures):
+        spec.delete(tex)
+    for mat in spec.materials:
+        mat.textures = [""] * len(mat.textures)
+
+
+def geometry_model(mjcf: str | Path) -> mujoco.MjModel:
+    """Compile an asset without its textures: for geometry, mass and joint queries, which
+    would otherwise load every texture image into memory."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        spec = mujoco.MjSpec.from_file(str(mjcf))
+        _strip_textures(spec)
+        return spec.compile()
+
+
+def _absolute_meshes(
+    child: mujoco.MjSpec,
+    child_xml: Path,
+    textures: TextureSpec | None = None,
+    cache: Path | None = None,
+) -> int:
+    """Point mesh and texture files at their real location (absolute) before attaching.
+    Textures larger than textures.max_size are replaced by cached scaled-down copies.
+    Returns the bytes the textures will take in memory."""
     mesh_dir = child_xml.parent / (child.meshdir or "")
     for mesh in child.meshes:
         if mesh.file:
             mesh.file = str((mesh_dir / mesh.file).resolve())
     child.meshdir = ""
+    textures = textures or TextureSpec(max_size=0)
+    if not textures.enabled:
+        _strip_textures(child)
+        child.texturedir = ""
+        return 0
     tex_dir = child_xml.parent / (child.texturedir or "")
+    total = 0
     for tex in child.textures:
-        if tex.file:
-            tex.file = str((tex_dir / tex.file).resolve())
+        if not tex.file:
+            continue
+        src = (tex_dir / tex.file).resolve()
+        tex.file, w, h = _scaled_texture(src, textures.max_size, cache)
+        total += w * h * 3
     child.texturedir = ""
+    return total
+
+
+def _scaled_texture(src: Path, max_size: int, cache: Path | None) -> tuple[str, int, int]:
+    """(file to use, width, height): `src`, or a cached copy no larger than max_size."""
+    try:
+        from PIL import Image  # noqa: PLC0415
+
+        with Image.open(src) as im:
+            w, h = im.size
+            if not max_size or max(w, h) <= max_size or cache is None:
+                return str(src), w, h
+            scale = max_size / max(w, h)
+            size = (max(1, round(w * scale)), max(1, round(h * scale)))
+            import hashlib  # noqa: PLC0415
+
+            key = hashlib.sha1(f"{src}:{src.stat().st_mtime_ns}".encode()).hexdigest()[:16]
+            dst = cache / f"{src.stem}_{key}_{max_size}.png"
+            if not dst.exists():
+                cache.mkdir(parents=True, exist_ok=True)
+                im.convert("RGB").resize(size, Image.LANCZOS).save(dst)
+            return str(dst.resolve()), size[0], size[1]
+    except Exception:  # noqa: BLE001  (unreadable image: let MuJoCo report it)
+        return str(src), 0, 0
 
 
 def _relative_mesh_paths(xml: str, scene_dir: Path) -> str:
@@ -538,11 +608,15 @@ def build_scene(
     sheet: SheetSpec | None = None,
     include_robots: bool = False,
     articulation: ArticulationSpec | None = None,
+    textures: TextureSpec | None = None,
 ) -> SceneReport:
     out_file = Path(out_file)
     out_file.parent.mkdir(parents=True, exist_ok=True)
     table = table or TableSpec()
     articulation = articulation or ArticulationSpec()
+    textures = textures or TextureSpec()
+    tex_cache = out_file.parent / "textures"
+    tex_bytes = 0
     skipped_robots = []
     if not include_robots:
         for it in items:
@@ -568,7 +642,7 @@ def build_scene(
         warnings.simplefilter("ignore")
         for it in placed:
             child = mujoco.MjSpec.from_file(it.mjcf)
-            _absolute_meshes(child, Path(it.mjcf))
+            tex_bytes += _absolute_meshes(child, Path(it.mjcf), textures, tex_cache)
             if articulation.enabled and it.category not in ROBOT_CATEGORIES:
                 dyn = _joint_dynamics(it.mjcf)
                 passive += [f"{it.id}/{n}" for n in _object_motors(child, dyn, articulation)]
@@ -580,13 +654,21 @@ def build_scene(
             softened += _soften_articulation(child, articulation)
             frame = scene.worldbody.add_frame(pos=list(it.pos), quat=list(it.frame_quat()))
             scene.attach(child, prefix=f"{it.id}/", frame=frame)
-        model = scene.compile()
+        # to_xml compiles the scene; write it, release the spec, then load once for the
+        # settle check (compiling twice kept two full copies of every mesh and texture).
         out_file.write_text(_relative_mesh_paths(scene.to_xml(), out_file.parent))
+        del scene
+        import gc  # noqa: PLC0415
+
+        gc.collect()
+        model = mujoco.MjModel.from_xml_path(str(out_file))
 
     report = SceneReport(str(out_file), asdict(table), [asdict(i) for i in placed])
     report.sheet = asdict(sheet) if sheet else None
     report.skipped_robots = skipped_robots
     report.softened_joints = softened
+    report.texture_mb = round(tex_bytes / 2**20, 1)
+    report.textures = int(model.ntex)
     report.nested = nested_report
     report.nesting_problems = problems
     report.passive_motors = passive

@@ -37,6 +37,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [SemVer](ht
 - ADR 0003 (native backend semantics); docs/validation.md.
 
 ### Fixed (found on real SimReady assets)
+- `make scene` was killed for running out of memory with 60 assets:
+  - **Compiled once.** The scene was compiled twice (`compile()`, then `to_xml()`), so two full copies of every mesh and texture were held at once. It is now compiled once, written, released, and loaded once for the settle check.
+  - **Scene textures capped** at 1024 px (`textures: max_size`), from cached scaled-down copies, a quarter of the memory of 2048 px. `textures: enabled: false` gives plain colours. The converted assets keep their full-size textures.
+  - **Geometry-only loads.** Layout, nesting and joint queries load assets without textures, and the nesting cache no longer holds every asset's textures.
+  - **Reported.** The scene prints its texture count and memory.
 - `place: {on: ID}` failed to load ("unknown keys [True]"): YAML 1.1 reads a bare `on` as the boolean true. A `True` key is now read as `on`. Tested with real YAML.
 - kitchenware_mug_d01 tipped over: its **authored** MassAPI values (on the collider) put the centre of mass 37 mm toward the handle, past the edge of its base. The real shape's is 1 mm off-axis and the hull's 9 mm, so the file's values are simply wrong. Two corrections now apply to authored mass properties (`authored_mass: auto`, the default):
   - **Centre of mass outside the base.** When the object at its authored rest pose would topple, but its real shape would not, the centre of mass and inertia come from the shape and the authored mass is kept (mug_d01). kitchenware_mug_e01's centre of mass is 10 mm off but still over its base, so it is left alone.

@@ -23,6 +23,13 @@ table:
   width: 0.8
   height: 0.75
 
+# Textures in the scene. Each costs width x height x 3 bytes of RAM (2048 px = 12 MB), so the
+# scene uses scaled-down copies, cached in outputs/scene/textures (asset files unchanged).
+# Lower max_size, or set enabled: false, if `make scene` runs out of memory ("Killed").
+textures:
+  enabled: true
+  max_size: 1024      # px, longest side; 0 keeps the originals
+
 # Doors, drawers and other moving parts without a motor get light damping and friction in
 # the scene only (asset files unchanged), so they stay where you drag them in the viewer.
 articulation:

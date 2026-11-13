@@ -25,7 +25,6 @@ with `decompose: concave` (see `srmj set`); a solid convex hull has no inside.
 from __future__ import annotations
 
 import math
-import warnings
 from dataclasses import dataclass, field
 
 import mujoco
@@ -83,9 +82,9 @@ class Shape:
 
 
 def load_shape(mjcf: str) -> Shape:
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        m = mujoco.MjModel.from_xml_path(mjcf)
+    from simready_mujoco.sim.scene import geometry_model  # noqa: PLC0415
+
+    m = geometry_model(mjcf)  # no textures: only the geometry is needed here
     d = mujoco.MjData(m)
     mujoco.mj_forward(m, d)
     geoms = [g for g in range(m.ngeom) if m.geom_contype[g] or m.geom_conaffinity[g]]

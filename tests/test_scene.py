@@ -212,3 +212,31 @@ def test_robot_motors_are_kept(gadget, tmp_path):
         include_robots=True,
     )
     assert rep.passive_motors == [] and rep.momentary_joints == []
+
+
+def test_scene_textures_are_scaled_or_dropped(tmp_path):
+    from build import build_textured_asset
+    from PIL import Image
+
+    from simready_mujoco.sim.scene import TextureSpec
+
+    xml = convert(build_textured_asset(tmp_path / "tex"), tmp_path / "out" / "tex")
+    src = next((xml.parent / "textures").glob("*.png"))
+    full = Image.open(src).size
+
+    rep = build_scene(
+        [Item("t", str(xml))], tmp_path / "a" / "scene.xml", textures=TextureSpec(max_size=8)
+    )
+    m = mujoco.MjModel.from_xml_path(rep.scene)
+    ours = [i for i in range(m.ntex) if m.texture(i).name.startswith("t/")]
+    assert len(ours) == 1 and max(m.tex_width[ours[0]], m.tex_height[ours[0]]) == 8
+    assert list((tmp_path / "a" / "textures").glob("*.png"))  # cached copy
+    assert Image.open(src).size == full  # the asset's own texture is untouched
+    assert rep.texture_mb < 0.01  # 8 x 8 px
+
+    plain = build_scene(
+        [Item("t", str(xml))], tmp_path / "b" / "scene.xml", textures=TextureSpec(enabled=False)
+    )
+    mp = mujoco.MjModel.from_xml_path(plain.scene)
+    assert not [i for i in range(mp.ntex) if mp.texture(i).name.startswith("t/")]
+    assert plain.texture_mb == 0
