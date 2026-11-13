@@ -27,6 +27,7 @@ def convert(
     quiet: bool = True,
     actuators: str = "auto",
     decompose: str = "auto",
+    articulation: list[dict] | None = None,
 ) -> Path:
     """Convert one USD asset to MJCF and return the MJCF file path.
 
@@ -45,6 +46,8 @@ def convert(
         decompose: native backend: "auto" splits concave collision meshes into convex parts
             (CoACD) only when their hull overlaps another part at the authored pose (hollow
             carcasses with things inside); "concave", "all" or "off"
+        articulation: native backend: joints to add for moving parts the asset models as
+            plain meshes (see usd.articulate.PartJoint and docs/articulation.md)
     """
     usd_file, out_dir = Path(usd_file), Path(out_dir)
     if not usd_file.exists():
@@ -54,10 +57,17 @@ def convert(
         from simready_mujoco.native import parse_stage, write_mjcf  # noqa: PLC0415
 
         stage, _ = open_stage(usd_file, runtime=runtime, variants=variants)
+        added = []
+        if articulation:
+            from simready_mujoco.usd.articulate import apply_articulation  # noqa: PLC0415
+
+            added = apply_articulation(stage, articulation)
         if decompose == "auto":
             model = _auto_decompose(stage, usd_file.stem, actuators, out_dir)
         else:
             model = parse_stage(stage, name=usd_file.stem, actuators=actuators, decompose=decompose)
+        if added:
+            model.notes["added_joints"] = added
         if generate_collision:
             model.notes["collision_flag"] = "ignored: native backend uses authored colliders"
         mjcf = write_mjcf(model, out_dir)

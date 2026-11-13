@@ -284,6 +284,7 @@ def batch(
                 quiet=not verbose,
                 actuators=entry.get("actuators", cfg.get("actuators", "auto")),
                 decompose=entry.get("decompose", cfg.get("decompose", "auto")),
+                articulation=entry.get("articulation"),
             )
             row["stage"] = "load"
             row.update(summarize_mjcf(mjcf).to_dict(), ok=True, stage="done")
@@ -545,8 +546,11 @@ def scene(
         )
     console.print(f"View it: [cyan]srmj view {out_file}[/]")
     console.print(
-        "[dim]In the viewer: double-click a part to select it, then Ctrl + right-drag to pull "
-        "it (Ctrl + left-drag to twist). Space pauses.[/]"
+        "[dim]In the viewer: double-click a part to select it, then\n"
+        "  Ctrl + right-drag        lift / move it (vertical plane facing you)\n"
+        "  Ctrl + Shift + right-drag  slide it along the floor\n"
+        "  Ctrl + left-drag         twist it  ·  doors, lids and knobs: drag the part itself\n"
+        "  Space pauses · Backspace resets[/]"
     )
     if open_viewer:
         from simready_mujoco.sim.load import view as _view
@@ -558,6 +562,75 @@ def dataclasses_asdict(obj):
     import dataclasses
 
     return dataclasses.asdict(obj)
+
+
+@app.command()
+def parts(
+    target: str = typer.Argument(
+        ..., help="USD file, an asset id from the config, or 'all' for every asset"
+    ),
+    config: Path = typer.Option(Path("configs/subset.yaml"), "--config", "-c"),
+    depth: int = typer.Option(4, "--depth", "-d", help="How deep to list the prim tree"),
+    runtime: str = typer.Option("mujoco", "--runtime", "-r", help=RUNTIME_HELP),
+) -> None:
+    """List an asset's parts with their size and position, to write `articulation:` specs.
+
+    Positions are metres in the asset's own frame, the frame `axis:` and `at:` refer to.
+    """
+    from simready_mujoco.usd.stage import open_stage
+
+    if Path(target).exists():
+        stage, _ = open_stage(target, runtime=runtime)
+        _print_parts(Path(target).name, stage, depth, articulation=None)
+        return
+
+    from simready_mujoco.fetch import resolve_asset
+
+    cfg = yaml.safe_load(config.read_text()) if config.exists() else {}
+    entries = [e for e in cfg.get("assets", []) if target in ("all", e["id"])]
+    if not entries:
+        raise typer.BadParameter(f"'{target}' is neither a file nor an asset id in {config}")
+    for entry in entries:
+        usd = resolve_asset(entry).usd
+        stage, _ = open_stage(
+            usd,
+            runtime=entry.get("runtime", cfg.get("runtime", runtime)),
+            variants=entry.get("variants") or {},
+        )
+        _print_parts(entry["id"], stage, depth, articulation=entry.get("articulation"))
+
+
+def _print_parts(title: str, stage, depth: int, articulation) -> None:
+    from rich.table import Table
+
+    from simready_mujoco.usd.articulate import describe_parts
+
+    rows = describe_parts(stage, max_depth=depth)
+    t = Table(title=f"{title}  (metres, asset frame)", title_justify="left")
+    t.add_column("part", no_wrap=True)
+    t.add_column("type", no_wrap=True)
+    t.add_column("role", no_wrap=True)
+    t.add_column("center x y z", no_wrap=True)
+    t.add_column("size x y z", no_wrap=True)
+    fmt = lambda v: " ".join(f"{c:6.3f}" for c in v) if v else ""  # noqa: E731
+    for r in rows:
+        name = "  " * r["depth"] + r["path"].split("/")[-1]
+        t.add_row(name, r["type"], r["role"], fmt(r.get("center")), fmt(r.get("size")))
+    from rich.console import Console
+
+    Console(width=max(console.width, 120)).print(t)  # full names even in narrow terminals
+    joints = sum(r["role"] == "joint" for r in rows)
+    if articulation:
+        console.print(f"[green]{len(articulation)} joint(s) added from the config[/]\n")
+    elif joints:
+        console.print(f"[green]{joints} joint(s) authored in the asset[/]\n")
+    else:
+        console.print(
+            "[yellow]No joints authored.[/] To make a part move, add to this asset in the config:\n"
+            "  articulation:\n"
+            "    - {part: <name>, joint: hinge, axis: z, at: [-x, +y], range: [0, 110]}\n"
+            "[dim]See docs/articulation.md[/]\n"
+        )
 
 
 @app.command()

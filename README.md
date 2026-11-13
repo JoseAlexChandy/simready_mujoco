@@ -27,7 +27,7 @@ srmj batch configs/subset.yaml --only franka_fr3  # just one asset
 make scene                                        # all converted assets on a floor sheet
 ```
 
-**Moving parts in the viewer:** double-click a door, drawer or object to select it, then Ctrl + right-drag to pull it (Ctrl + left-drag to twist). Doors and drawers keep their position when released.
+**Moving things in the viewer:** double-click an object or part to select it, then **Ctrl + right-drag** to lift and move it, **Ctrl + Shift + right-drag** to slide it along the floor, and **Ctrl + left-drag** to twist it. Doors, lids and drawers stay where you leave them. For assets that ship as one rigid piece, list the parts that should move under `articulation:` (see [docs/articulation.md](docs/articulation.md)).
 
 **Adding downloaded assets:** `srmj add ~/Downloads/<folder>` → `srmj batch configs/subset.yaml --only <id>` → `make scene`.
 
@@ -43,6 +43,7 @@ make scene                                        # all converted assets on a fl
 | `srmj inspect FILE [--json]` | Lists bodies, mass, materials, joints, drives, colliders, and **what the baseline converter would lose** |
 | `srmj convert FILE [-o DIR] [--collision] [--sim-profile NAME]` | Converts one asset, applies a MuJoCo simulation preset, verifies it loads and settles |
 | `srmj batch CONFIG.yaml` | Converts every asset in a config (local or Hugging Face), writes `outputs/batch_report.json` |
+| `srmj parts ID\|all\|FILE` | Lists an asset's parts with size and position, to write `articulation:` specs |
 | `srmj view FILE.xml` | Opens the interactive MuJoCo viewer |
 | `srmj add PATH` | Adds downloaded USD assets (file, SimReady folder, or folder of them) to `configs/subset.yaml` |
 | `srmj scene [configs/scene.yaml] [--view]` | Puts converted assets on a light-brown floor sheet (or a table), checks everything settles; robots optional |

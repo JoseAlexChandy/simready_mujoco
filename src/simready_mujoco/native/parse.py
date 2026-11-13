@@ -334,8 +334,23 @@ def _collect_bodies(ctx: _Ctx, parsed) -> list[str]:
     return paths
 
 
+def _owner_override(prim: Usd.Prim, bodies: set[str]) -> str | None:
+    """Body named by a `srmj:body` attribute on the prim or an ancestor (set by
+    usd.articulate for colliders that live outside the moving part's subtree)."""
+    p = prim
+    while p and not p.IsPseudoRoot():
+        a = p.GetAttribute("srmj:body")
+        if a and a.HasAuthoredValue() and str(a.Get()) in bodies:
+            return str(a.Get())
+        p = p.GetParent()
+    return None
+
+
 def _owner_body(prim: Usd.Prim, bodies: set[str]) -> str:
     """Nearest ancestor (or self) that is a rigid body; "" if none (static/world)."""
+    forced = _owner_override(prim, bodies)
+    if forced is not None:
+        return forced
     p = prim
     while p and not p.IsPseudoRoot():
         if str(p.GetPath()) in bodies:
@@ -636,7 +651,9 @@ def _collect_colliders(ctx: _Ctx, parsed, bodies: list[str]) -> dict[str, str]:
                 continue
             prim = ctx.stage.GetPrimAtPath(path)
             rb = str(getattr(desc, "rigidBody", "") or "")
-            owner = rb if rb in body_set else _owner_body(prim, body_set)
+            owner = _owner_override(prim, body_set)
+            if owner is None:
+                owner = rb if rb in body_set else _owner_body(prim, body_set)
             built = _geom_from_prim(ctx, prim, owner, collision=True)
             if built is None:
                 continue

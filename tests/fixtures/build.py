@@ -421,3 +421,34 @@ def build_textured_asset(asset_dir: Path) -> Path:
         UsdShade.MaterialBindingAPI.Apply(subset.GetPrim()).Bind(m)
     stage.GetRootLayer().Save()
     return path
+
+
+def build_static_appliance(path: Path) -> Path:
+    """A microwave authored like many SimReady props: ONE rigid body whose door and button are
+    plain meshes, no joints. Centimetre units and a rotated, offset root so that articulation
+    specs are checked in the asset frame, not the world frame.
+
+    Asset frame (cm): carcass 50 x 35 x 30 centred on (0, 0, 15), front face at y = -17.5.
+    Door: 35 x 2 x 28 panel in front of it, left edge at x = -25. Button: right of the door."""
+    stage = Usd.Stage.CreateNew(str(path))
+    UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
+    UsdGeom.SetStageMetersPerUnit(stage, 0.01)
+    root_x = UsdGeom.Xform.Define(stage, "/Microwave")
+    api = UsdGeom.XformCommonAPI(root_x)
+    api.SetTranslate(Gf.Vec3d(100, 200, 0))
+    api.SetRotate(Gf.Vec3f(0, 0, 90))
+    root = root_x.GetPrim()
+    stage.SetDefaultPrim(root)
+    UsdPhysics.RigidBodyAPI.Apply(root)
+    UsdPhysics.MassAPI.Apply(root).CreateMassAttr(12.0)
+
+    UsdGeom.Xform.Define(stage, "/Microwave/geo")
+    carcass = _box_mesh(stage, "/Microwave/geo/carcass", (50, 35, 30), (0, 0, 15))
+    _collider(carcass.GetPrim())
+    UsdGeom.Xform.Define(stage, "/Microwave/geo/door")
+    door = _box_mesh(stage, "/Microwave/geo/door/door_panel", (35, 2, 28), (-7.5, -18.5, 15))
+    _collider(door.GetPrim())
+    button = _box_mesh(stage, "/Microwave/geo/button", (4, 1, 2), (18, -18.0, 8))
+    _collider(button.GetPrim())
+    stage.GetRootLayer().Save()
+    return path
