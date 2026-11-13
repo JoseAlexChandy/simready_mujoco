@@ -28,7 +28,7 @@ table:
 # Lower max_size, or set enabled: false, if `make scene` runs out of memory ("Killed").
 textures:
   enabled: true
-  max_size: 1024      # px, longest side; 0 keeps the originals
+  max_size: 512      # px, longest side; 0 keeps the originals
 
 # Doors, drawers and other moving parts without a motor get light damping and friction in
 # the scene only (asset files unchanged), so they stay where you drag them in the viewer.
