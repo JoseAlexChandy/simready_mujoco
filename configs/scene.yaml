@@ -1,22 +1,38 @@
-# Scene composition for `srmj scene`: floor + table + converted assets.
+# Scene composition for `srmj scene`.
 # Assets come from `assets_from`; each is looked up in <output_dir>/<id>/*.xml.
 
 assets_from: configs/subset.yaml
 output: outputs/scene/scene.xml
 sim_profile: manipulation
 
-table:
-  length: 1.4      # metres along x (grows automatically to fit the objects)
-  width: 0.8       # metres along y
-  height: 0.75     # tabletop height
+# Robots and grippers (category robot / gripper). Off for now; set true to add them back.
+robots: false
 
-# Where each asset goes. Default is auto:
-#   floor (taller than 0.5 m or wider than 0.6 m), table (everything else),
-#   robot (fixed-base robots are mounted on the table's left end).
-# Override per asset id with: floor | table | robot | skip | [x, y, z]
+# Default layout: a light-brown sheet on the floor, objects in rows on it
+# (big items at the back, small ones in front).
+sheet:
+  rgba: [0.80, 0.68, 0.50, 1.0]   # light brown
+  margin: 0.4                     # border around the objects, metres
+  gap: 0.3                        # spacing between objects, metres
+
+# Optional table layout instead of the sheet: big items on the floor, small ones on the
+# table, robots on its left end. Set enabled: true to use it.
+table:
+  enabled: false
+  length: 1.4
+  width: 0.8
+  height: 0.75
+
+# Doors, drawers and other moving parts without a motor get light damping and friction in
+# the scene only (asset files unchanged), so they stay where you drag them in the viewer.
+articulation:
+  enabled: true
+  damping: 0.5        # N·m·s/rad for hinges, N·s/m for sliders
+  frictionloss: 0.05
+
+# Per-asset overrides: floor | table | robot | skip | [x, y, z]
 place:
   example_cabinet: skip      # synthetic test asset
 
 # Optional rotation about the vertical axis, in degrees, per asset id
-yaw:
-  refrigerator_a01: 0
+yaw: {}

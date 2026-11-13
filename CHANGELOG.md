@@ -5,6 +5,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [SemVer](ht
 ## [Unreleased]
 
 ### Added
+- `srmj add PATH`: finds USD assets (a file, a SimReady package folder, or a folder of either) and appends them to `configs/subset.yaml`, keeping its comments.
+- Scene: default layout is now a light-brown sheet on the floor with objects in rows (big at the back, small in front); the table layout is kept behind `table: {enabled: true}`.
+- Scene: robots and grippers are left out unless `robots: true`.
+- Scene: unactuated doors/drawers get light damping + friction (`articulation:`), so parts dragged in the viewer stay where they are left; asset files unchanged.
 - `srmj scene` / `make scene`: composes converted assets into one scene (floor, table, lights) with automatic placement from collision bounding boxes; big items on the floor, small ones on the table, fixed-base robots on the table edge; per-asset overrides in `configs/scene.yaml`; settle check reports anything that falls or slides.
 - **Native USD → MJCF backend** (now the default; `--backend upstream` keeps the baseline):
   kinematic tree from UsdPhysics joints with correct joint frames and `ref`; mass via USD's
@@ -20,7 +24,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [SemVer](ht
 - ADR 0003 (native backend semantics); docs/validation.md.
 
 ### Fixed (found on real SimReady assets)
-- SimReady refrigerator's doors were blown open: under the MuJoCo variant its hollow carcass is a single `convexHull` collider, so MuJoCo treats it as a solid block that overlaps the compartments inside (106 mm). New `--decompose auto|concave|all|off` (default `auto`): concave colliders whose hull overlaps another part at the authored pose are split into convex parts with CoACD (cached in `~/.cache/simready-mujoco`). Meshes still overlapping after a round are refined (tolerance 0.08 → 0.04 → 0.02, up to 128 parts); rounds are recorded in `conversion_report.json`.
+- SimReady refrigerator's doors were blown open: under the MuJoCo variant its hollow carcass is a single `convexHull` collider, so MuJoCo treats it as a solid block that overlaps the compartments inside (106 mm). New `--decompose auto|concave|all|off` (default `auto`): concave colliders whose hull overlaps another part at the authored pose are split into convex parts with CoACD (cached in `~/.cache/simready-mujoco`). Meshes still overlapping after a round are refined (tolerance 0.08 → 0.04 → 0.02, up to 128 parts); rounds are recorded in `conversion_report.json`. Overlap checks use fresh temporary folders because MuJoCo caches mesh files by path within a process (same-named files from an earlier round were being re-used).
 - SimReady FR3 fell under gravity: its `MjcActuator`s have no position feedback (gains 0.003), while its UsdPhysics drives carry Menagerie's gains. New `--actuators auto|mjc|drive` (default `auto`) uses the drive in that case and warns. See docs/validation.md.
 - Meshes over 200k faces are written as OBJ (MuJoCo's STL reader limit; refrigerator_a01).
 - Mesh assets use `inertia="shell"` so open visual meshes load (FR3 link 5); masses always come from explicit inertials.

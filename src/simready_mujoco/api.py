@@ -106,13 +106,22 @@ def _write_report(model, out_dir: Path) -> None:
 
 def _auto_decompose(stage, name: str, actuators: str, out_dir: Path):
     """Convert, then split concave colliders that overlap other parts at the authored pose.
-    Meshes still overlapping after a round are redone at a finer level (decompose.LEVELS)."""
+    Meshes still overlapping after a round are redone at a finer level (decompose.LEVELS).
+
+    Each check uses a fresh temporary folder: MuJoCo caches mesh assets by file path within a
+    process, so re-writing same-named mesh files would make later checks see stale meshes.
+    """
+    import tempfile  # noqa: PLC0415
+
     from simready_mujoco.native import parse_stage, write_mjcf  # noqa: PLC0415
     from simready_mujoco.native.decompose import LEVELS  # noqa: PLC0415
 
+    def check(model) -> set[str]:
+        with tempfile.TemporaryDirectory(prefix="srmj_check_") as tmp:
+            return _overlapping_meshes(write_mjcf(model, tmp), model)
+
     model = parse_stage(stage, name=name, actuators=actuators)
-    write_mjcf(model, out_dir)
-    overlapping = _overlapping_meshes(out_dir / f"{name}.xml", model)
+    overlapping = check(model)
     if not overlapping:
         return model
     levels: dict[str, int] = {}
@@ -123,9 +132,7 @@ def _auto_decompose(stage, name: str, actuators: str, out_dir: Path):
         model = parse_stage(
             stage, name=name, actuators=actuators, decompose="concave", decompose_only=dict(levels)
         )
-        _clear_meshes(out_dir)
-        write_mjcf(model, out_dir)
-        still = _overlapping_meshes(out_dir / f"{name}.xml", model)
+        still = check(model)
         rounds.append({"level": level, **LEVELS[level], "still_overlapping": sorted(still)})
         # only meshes that were decomposed can be refined further
         decomposable = {m for m, parts in _parts_by_source(model).items() if parts}
@@ -134,11 +141,15 @@ def _auto_decompose(stage, name: str, actuators: str, out_dir: Path):
             break
     model.notes["overlapping_colliders"] = sorted(levels)
     model.notes["decomposition_rounds"] = rounds
-    if rounds[-1]["still_overlapping"]:
+    remaining = set(rounds[-1]["still_overlapping"]) & {
+        m for m, parts in _parts_by_source(model).items() if parts
+    }
+    if remaining:
         model.warnings.append(
             "colliders still overlap after the finest decomposition: "
-            + ", ".join(rounds[-1]["still_overlapping"])
+            + ", ".join(sorted(remaining))
         )
+    _clear_meshes(out_dir)
     return model
 
 

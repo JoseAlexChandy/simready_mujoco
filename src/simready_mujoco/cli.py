@@ -419,13 +419,53 @@ def compare_cmd(
 
 
 @app.command()
+def add(
+    path: Path = typer.Argument(..., help="USD file, SimReady package folder, or folder of assets"),
+    config: Path = typer.Option(Path("configs/subset.yaml"), "--config", "-c", exists=True),
+    category: str = typer.Option(
+        "object",
+        help="Category for the new entries (robot/gripper are left out of scenes by default)",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Only list what would be added"),
+) -> None:
+    """Add downloaded USD assets to a batch config, ready for `srmj batch` and `srmj scene`."""
+    from simready_mujoco.add import add_to_config, find_assets
+
+    found, problems = find_assets(path)
+    for p in problems:
+        console.print(f"[yellow]! {p}[/]")
+    if not found:
+        console.print("[red]No USD assets found.[/]")
+        raise typer.Exit(1)
+    t = Table(title=f"Found in {path}")
+    t.add_column("id")
+    t.add_column("root USD", overflow="fold")
+    for f in found:
+        t.add_row(f.id, str(f.path))
+    console.print(t)
+    if dry_run:
+        return
+    added = add_to_config(config, found, category)
+    console.print(f"Added {len(added)} to {config}: {', '.join(added) or '(all already listed)'}")
+    if added:
+        only = " ".join(f"--only {a}" for a in added)
+        console.print(f"Next: [cyan]srmj batch {config} {only}[/] then [cyan]make scene[/]")
+
+
+@app.command()
 def scene(
     config: Path = typer.Argument(Path("configs/scene.yaml"), exists=True, help="Scene config"),
     out: Path = typer.Option(None, "--out", "-o", help="Scene file (default from config)"),
     open_viewer: bool = typer.Option(False, "--view", help="Open the scene in the viewer"),
 ) -> None:
     """Put converted assets in one scene: floor, table, objects placed automatically."""
-    from simready_mujoco.sim.scene import Item, TableSpec, build_scene
+    from simready_mujoco.sim.scene import (
+        ArticulationSpec,
+        Item,
+        SheetSpec,
+        TableSpec,
+        build_scene,
+    )
 
     cfg = yaml.safe_load(config.read_text()) or {}
     assets_cfg = yaml.safe_load(Path(cfg.get("assets_from", "configs/subset.yaml")).read_text())
@@ -450,8 +490,19 @@ def scene(
         console.print(f"[yellow]Not converted yet (run srmj batch): {', '.join(missing)}[/]")
     out_file = out or Path(cfg.get("output", out_root / "scene" / "scene.xml"))
     table = TableSpec(**(cfg.get("table") or {}))
+    sheet_cfg = dict(cfg.get("sheet") or {})
+    if "rgba" in sheet_cfg:
+        sheet_cfg["rgba"] = tuple(sheet_cfg["rgba"])
     with console.status("Building scene and letting it settle …"):
-        rep = build_scene(items, out_file, table, cfg.get("sim_profile", "manipulation"))
+        rep = build_scene(
+            items,
+            out_file,
+            table,
+            cfg.get("sim_profile", "manipulation"),
+            sheet=SheetSpec(**sheet_cfg),
+            include_robots=bool(cfg.get("robots", False)),
+            articulation=ArticulationSpec(**(cfg.get("articulation") or {})),
+        )
     (out_file.parent / "scene_report.json").write_text(
         json.dumps(dataclasses_asdict(rep), indent=2)
     )
@@ -468,10 +519,23 @@ def scene(
             " ".join(f"{v:.2f}" for v in size),
         )
     console.print(t)
-    console.print(
-        f"Table {rep.table['length']:.2f} × {rep.table['width']:.2f} m, "
-        f"top at {rep.table['height']:.2f} m"
-    )
+    if rep.sheet:
+        console.print(f"Floor sheet {rep.sheet['length']:.2f} × {rep.sheet['width']:.2f} m")
+    else:
+        console.print(
+            f"Table {rep.table['length']:.2f} × {rep.table['width']:.2f} m, "
+            f"top at {rep.table['height']:.2f} m"
+        )
+    if rep.skipped_robots:
+        console.print(
+            f"[dim]Robots/grippers left out (set robots: true in the scene config): "
+            f"{', '.join(rep.skipped_robots)}[/]"
+        )
+    if rep.softened_joints:
+        console.print(
+            f"[dim]{rep.softened_joints} unactuated joints given light damping so dragged parts "
+            "stay put (articulation: in the scene config)[/]"
+        )
     for s in rep.settle:
         mark = "[green]✓[/]" if s["ok"] else "[yellow]![/]"
         console.print(
@@ -479,6 +543,10 @@ def scene(
             f"slid {s['slide_m'] * 1000:.0f} mm"
         )
     console.print(f"View it: [cyan]srmj view {out_file}[/]")
+    console.print(
+        "[dim]In the viewer: double-click a part to select it, then Ctrl + right-drag to pull "
+        "it (Ctrl + left-drag to twist). Space pauses.[/]"
+    )
     if open_viewer:
         from simready_mujoco.sim.load import view as _view
 

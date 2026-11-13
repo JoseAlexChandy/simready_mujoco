@@ -1,10 +1,14 @@
-"""Compose converted assets into one MuJoCo scene: floor, table, and auto-placed objects.
+"""Compose converted assets into one MuJoCo scene.
 
-Placement uses each asset's collision bounding box at its rest pose:
-  floor  big items (tall or wide: fridges, cabinets) stand in a row behind the table
-  table  small items (boxes, cups, grippers) are packed in rows on the tabletop
-  robot  fixed-base robots are mounted on the table's left end
-Every item starts a few millimetres above its support, so it settles instead of dropping.
+Default layout ("sheet"): a light-brown sheet on the floor with every object laid out on it
+in rows, big items at the back and small ones in front. Optional "table" layout: big items on
+the floor behind a table, small items on the tabletop, fixed-base robots on its left end.
+Robots and grippers are left out unless `include_robots` is set.
+
+Placement uses each asset's collision bounding box at its rest pose, and every item starts a
+few millimetres above its support, so it settles instead of dropping. Unactuated doors,
+drawers and other moving parts get light damping and friction (scene only, assets unchanged)
+so they stay where you drag them in the viewer.
 """
 
 from __future__ import annotations
@@ -30,10 +34,35 @@ FLOOR_GAP = 0.35
 
 @dataclass
 class TableSpec:
+    enabled: bool = False
     length: float = 1.4  # along x; grows to fit the items
     width: float = 0.8  # along y
     height: float = 0.75
     top: float = 0.04  # tabletop thickness
+
+
+@dataclass
+class SheetSpec:
+    """Floor sheet the objects stand on (used when the table is disabled)."""
+
+    rgba: tuple = (0.80, 0.68, 0.50, 1.0)  # light brown
+    margin: float = 0.4  # border around the objects, metres
+    thickness: float = 0.004
+    gap: float = 0.3  # spacing between objects
+    length: float = 0.0  # filled in by layout
+    width: float = 0.0
+
+
+@dataclass
+class ArticulationSpec:
+    """Damping/friction for unactuated hinge and slide joints, so dragged parts stay put."""
+
+    damping: float = 0.5  # N·m·s/rad (hinges) or N·s/m (slides)
+    frictionloss: float = 0.05
+    enabled: bool = True
+
+
+ROBOT_CATEGORIES = ("robot", "gripper")
 
 
 @dataclass
@@ -56,6 +85,9 @@ class SceneReport:
     table: dict
     items: list[dict] = field(default_factory=list)
     settle: list[dict] = field(default_factory=list)
+    sheet: dict | None = None
+    skipped_robots: list[str] = field(default_factory=list)
+    softened_joints: int = 0
 
 
 def _bbox(m: mujoco.MjModel) -> tuple[np.ndarray, np.ndarray]:
@@ -155,28 +187,85 @@ def layout(items: list[Item], table: TableSpec) -> list[Item]:
     return placed
 
 
+def layout_sheet(items: list[Item], sheet: SheetSpec) -> list[Item]:
+    """Lay every item out on a floor sheet in rows: big items at the back (+y), small in front."""
+    sized = []
+    for it in items:
+        if it.place == "skip":
+            continue
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            m = mujoco.MjModel.from_xml_path(it.mjcf)
+        lo, hi = _bbox(m)
+        it.bbox_min, it.bbox_max = tuple(lo), tuple(hi)
+        if isinstance(it.place, (list, tuple)):
+            it.pos, it.surface = tuple(float(v) for v in it.place), "fixed"
+        else:
+            sized.append((it, hi - lo))
+    big = [p for p in sized if p[1][2] > FLOOR_HEIGHT or max(p[1][:2]) > FLOOR_FOOTPRINT]
+    small = [p for p in sized if p not in big]
+    total_area = sum((s[0] + sheet.gap) * (s[1] + sheet.gap) for _, s in sized) or 1.0
+    row_limit = max(2.0, 1.6 * np.sqrt(total_area))
+
+    rows: list[list] = []
+    for group in (sorted(big, key=lambda p: -p[1][2]), sorted(small, key=lambda p: -p[1][1])):
+        row: list = []
+        for it, size in group:
+            if row and sum(s[0] + sheet.gap for _, s in row) + size[0] > row_limit:
+                rows.append(row)
+                row = []
+            row.append((it, size))
+        if row:
+            rows.append(row)
+
+    widths = [sum(s[0] for _, s in r) + sheet.gap * (len(r) - 1) for r in rows]
+    depths = [max(s[1] for _, s in r) for r in rows]
+    sheet.length = (max(widths) if widths else 1.0) + 2 * sheet.margin
+    sheet.width = sum(depths) + sheet.gap * max(len(rows) - 1, 0) + 2 * sheet.margin
+    y = sheet.width / 2 - sheet.margin  # back edge; rows go towards the viewer (-y)
+    surface = sheet.thickness
+    for row, w, dep in zip(rows, widths, depths, strict=False):
+        x = -w / 2
+        for it, size in row:
+            it.pos = _rest_pos(it, x + size[0] / 2, y - dep / 2, surface)
+            it.surface = "sheet"
+            x += size[0] + sheet.gap
+        y -= dep + sheet.gap
+    return [it for it in items if it.place != "skip"]
+
+
 def _rest_pos(it: Item, cx: float, cy: float, surface_z: float) -> tuple[float, float, float]:
     lo, hi = np.array(it.bbox_min), np.array(it.bbox_max)
     centre = (lo + hi) / 2
     return (cx - centre[0], cy - centre[1], surface_z - lo[2] + CLEARANCE)
 
 
-def _shell(profile: dict[str, Any], table: TableSpec) -> mujoco.MjSpec:
+def _shell(profile: dict[str, Any], table: TableSpec, sheet: SheetSpec | None) -> mujoco.MjSpec:
     opt = " ".join(f'{k}="{v}"' for k, v in profile.items() if k != "flags")
     flags = " ".join(f'{k}="{v}"' for k, v in (profile.get("flags") or {}).items())
-    L, W, H, T = table.length, table.width, table.height, table.top
-    leg = 0.03
-    legs = "\n".join(
-        f'      <geom name="table_leg{i}" type="box" size="{leg} {leg} {(H - T) / 2}" '
-        f'pos="{sx * (L / 2 - 2 * leg)} {sy * (W / 2 - 2 * leg)} {(H - T) / 2}" material="table"/>'
-        for i, (sx, sy) in enumerate([(-1, -1), (-1, 1), (1, -1), (1, 1)])
-    )
+    support = ""
+    if table.enabled:
+        L, W, H, T = table.length, table.width, table.height, table.top
+        leg = 0.03
+        legs = "\n".join(
+            f'      <geom name="table_leg{i}" type="box" size="{leg} {leg} {(H - T) / 2}" '
+            f'pos="{sx * (L / 2 - 2 * leg)} {sy * (W / 2 - 2 * leg)} {(H - T) / 2}" material="table"/>'
+            for i, (sx, sy) in enumerate([(-1, -1), (-1, 1), (1, -1), (1, 1)])
+        )
+        support = f"""    <body name="table" pos="0 0 0">
+      <geom name="table_top" type="box" size="{L / 2} {W / 2} {T / 2}" pos="0 0 {H - T / 2}" material="table" friction="0.8 0.005 0.0001"/>
+{legs}
+    </body>"""
+    if sheet is not None:
+        support += f"""
+    <geom name="sheet" type="box" size="{sheet.length / 2} {sheet.width / 2} {sheet.thickness / 2}"
+      pos="0 0 {sheet.thickness / 2}" rgba="{" ".join(str(c) for c in sheet.rgba)}" friction="0.9 0.005 0.0001"/>"""
     xml = f"""<mujoco model="simready_scene">
   <compiler angle="radian" autolimits="true"/>
   <option {opt}>{f"<flag {flags}/>" if flags else ""}</option>
   <visual>
     <headlight diffuse="0.6 0.6 0.6" ambient="0.35 0.35 0.35" specular="0 0 0"/>
-    <global azimuth="150" elevation="-25" offwidth="1920" offheight="1080"/>
+    <global azimuth="120" elevation="-25" offwidth="1920" offheight="1080"/>
     <quality shadowsize="4096"/>
   </visual>
   <asset>
@@ -189,13 +278,32 @@ def _shell(profile: dict[str, Any], table: TableSpec) -> mujoco.MjSpec:
   <worldbody>
     <light pos="0 -1 3" dir="0 0.3 -1" directional="true" castshadow="true"/>
     <geom name="floor" type="plane" size="0 0 0.05" material="floor"/>
-    <body name="table" pos="0 0 0">
-      <geom name="table_top" type="box" size="{L / 2} {W / 2} {T / 2}" pos="0 0 {H - T / 2}" material="table" friction="0.8 0.005 0.0001"/>
-{legs}
-    </body>
+{support}
   </worldbody>
 </mujoco>"""
     return mujoco.MjSpec.from_string(xml)
+
+
+def _soften_articulation(child: mujoco.MjSpec, art: ArticulationSpec) -> int:
+    """Give unactuated hinge/slide joints light damping + friction so dragged parts stay put.
+    Joints that already have damping, or are driven by an actuator, are left alone."""
+    if not art.enabled:
+        return 0
+    driven = {a.target for a in child.actuators}
+    n = 0
+    for j in child.joints:
+        if j.type not in (mujoco.mjtJoint.mjJNT_HINGE, mujoco.mjtJoint.mjJNT_SLIDE):
+            continue
+        if j.name in driven or np.any(np.asarray(j.damping) > 0):
+            continue
+        try:
+            j.damping = art.damping
+        except TypeError:  # MuJoCo >= 4: damping is an array
+            j.damping = np.array([art.damping, 0.0, 0.0])
+        if j.frictionloss == 0:
+            j.frictionloss = art.frictionloss
+        n += 1
+    return n
 
 
 def _absolute_meshes(child: mujoco.MjSpec, child_xml: Path) -> None:
@@ -227,19 +335,35 @@ def build_scene(
     table: TableSpec | None = None,
     sim_profile: str = "manipulation",
     settle_seconds: float = 2.0,
+    sheet: SheetSpec | None = None,
+    include_robots: bool = False,
+    articulation: ArticulationSpec | None = None,
 ) -> SceneReport:
     out_file = Path(out_file)
     out_file.parent.mkdir(parents=True, exist_ok=True)
     table = table or TableSpec()
-    placed = layout(items, table)
+    articulation = articulation or ArticulationSpec()
+    skipped_robots = []
+    if not include_robots:
+        for it in items:
+            if it.category in ROBOT_CATEGORIES and it.place == "auto":
+                it.place = "skip"
+                skipped_robots.append(it.id)
+    if table.enabled:
+        placed, sheet = layout(items, table), None
+    else:
+        sheet = sheet or SheetSpec()
+        placed = layout_sheet(items, sheet)
     profile = get_profile(sim_profile)
-    scene = _shell(profile, table)
+    scene = _shell(profile, table, sheet)
 
+    softened = 0
     with warnings.catch_warnings(), redirect_output(out_file.parent / "scene_build.log"):
         warnings.simplefilter("ignore")
         for it in placed:
             child = mujoco.MjSpec.from_file(it.mjcf)
             _absolute_meshes(child, Path(it.mjcf))
+            softened += _soften_articulation(child, articulation)
             yaw = np.radians(it.yaw_deg)
             frame = scene.worldbody.add_frame(
                 pos=list(it.pos), quat=[np.cos(yaw / 2), 0, 0, np.sin(yaw / 2)]
@@ -249,6 +373,9 @@ def build_scene(
         out_file.write_text(_relative_mesh_paths(scene.to_xml(), out_file.parent))
 
     report = SceneReport(str(out_file), asdict(table), [asdict(i) for i in placed])
+    report.sheet = asdict(sheet) if sheet else None
+    report.skipped_robots = skipped_robots
+    report.softened_joints = softened
     report.settle = settle_check(model, placed, settle_seconds)
     return report
 
