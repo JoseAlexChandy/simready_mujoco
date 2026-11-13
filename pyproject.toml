@@ -16,6 +16,7 @@ dependencies = [
     "numpy",
     "scipy",
     "trimesh",
+    "pillow",  # texture export (PNG conversion, resizing)
     "pyyaml",
     "typer>=0.12",
     "rich>=13",

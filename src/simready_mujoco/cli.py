@@ -48,6 +48,7 @@ def doctor() -> None:
     check("usd-core (pxr)", lambda: __import__("pxr.Usd").Usd.GetVersion())
     check("mujoco", lambda: __import__("mujoco").__version__)
     check("trimesh", lambda: __import__("trimesh").__version__)
+    check("pillow (textures)", lambda: __import__("PIL").__version__)
 
     def upstream() -> str:
         from simready_mujoco.backends.upstream import upstream_path

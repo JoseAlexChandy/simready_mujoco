@@ -66,17 +66,22 @@ def write_obj(path: Path, md: MeshData) -> None:
 def export_texture(src: str, dst_dir: Path, name: str) -> str | None:
     """Copy/convert an image to PNG (MuJoCo's texture format), downscaled to MAX_TEXTURE.
     Returns the file name, or None if the image can't be read (e.g. EXR)."""
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    fname = f"{name}.png"
     try:
         from PIL import Image  # noqa: PLC0415
-    except ImportError:
+    except ImportError:  # without Pillow, PNGs can still be copied as they are
+        if src.lower().endswith(".png"):
+            import shutil  # noqa: PLC0415
+
+            shutil.copyfile(src, dst_dir / fname)
+            return fname
         return None
     try:
         with Image.open(src) as im:
             im = im.convert("RGBA" if im.mode in ("RGBA", "LA", "P") else "RGB")
             if max(im.size) > MAX_TEXTURE:
                 im.thumbnail((MAX_TEXTURE, MAX_TEXTURE))
-            dst_dir.mkdir(parents=True, exist_ok=True)
-            fname = f"{name}.png"
             im.save(dst_dir / fname)
             return fname
     except Exception:  # noqa: BLE001
