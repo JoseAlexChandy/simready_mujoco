@@ -1,28 +1,33 @@
-"""MuJoCo viewer with keyboard placement of objects.
+"""MuJoCo viewer with keyboard placement of the selected object.
 
-Double-click an object to select it, then:
+Double-click an object (or any of its parts) to select it, then:
 
-    Move mode (default)              Rotate mode (F9 toggles)
-    Home / End     away / towards    Home / End     tilt forward / back
-    Insert / Delete  left / right    Insert / Delete  turn left / right
-    Page Up / Down   up / down       Page Up / Down   roll left / right
+    Arrow keys   move it along the floor (up = away from you, relative to the camera)
+    W / S        raise / lower
+    A / D        turn left / right
+    Q / E        tilt forward / back
+    Z / C        roll left / right
+    R            restore its original orientation
+    Shift + key  bigger steps (5 cm / 15 deg instead of 1 cm / 5 deg)
 
-    F10  step size (fine 5 mm / 1 deg, normal 2 cm / 5 deg, coarse 10 cm / 15 deg)
-    F12  restore the object's original orientation (position kept)
+Hold a key to keep moving. Rotations turn the object about its centre of mass. Works
+paused or running (pause with Space to place precisely).
 
-Directions follow the camera: "away" is the way the camera looks, flattened onto the floor.
-Rotations turn the object about its centre of mass. Works paused or running.
+While an object is selected, these keys go to the object instead of the viewer. With
+nothing selected (double-click empty space), every key does what the viewer normally does:
+letters toggle display options (W wireframe, S shadows, ...), arrows step the history while
+paused. Ctrl/Alt combinations always go to the viewer. Mouse dragging, the Control panel
+sliders and everything else work as before.
 
-Only objects that are free to move (not fixed to the world) can be placed; selecting a
-door or a lid moves the whole object it belongs to. Mouse dragging, the Control panel
-sliders and every other viewer feature work as before.
-
-Why these keys: letters toggle the viewer's display options, 0-5 toggle geom groups, and
-the arrow keys step the simulation history while paused (which would undo a move).
+How: the viewer's GLFW key callback is wrapped (GLFW is shared with MuJoCo's viewer through
+the `glfw` package), so keys meant for the object never reach the viewer's shortcuts. If
+that is not possible on some platform, the keys are taken through the viewer's own key
+callback instead, and the viewer's shortcuts then also fire.
 """
 
 from __future__ import annotations
 
+import ctypes
 import math
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,16 +36,22 @@ import mujoco
 import numpy as np
 
 # GLFW key codes
-KEY_INSERT, KEY_DELETE = 260, 261
-KEY_PAGE_UP, KEY_PAGE_DOWN, KEY_HOME, KEY_END = 266, 267, 268, 269
-KEY_F9, KEY_F10, KEY_F12 = 298, 299, 301
+KEY_RIGHT, KEY_LEFT, KEY_DOWN, KEY_UP = 262, 263, 264, 265
+KEY_A, KEY_C, KEY_D, KEY_E, KEY_Q, KEY_R, KEY_S, KEY_W, KEY_Z = 65, 67, 68, 69, 81, 82, 83, 87, 90
+MOD_SHIFT, MOD_CONTROL, MOD_ALT, MOD_SUPER = 1, 2, 4, 8
+RELEASE, PRESS, REPEAT = 0, 1, 2
 
-STEPS = (("fine", 0.005, 1.0), ("normal", 0.02, 5.0), ("coarse", 0.10, 15.0))
+STEP = (0.01, 5.0)  # m, deg
+BIG_STEP = (0.05, 15.0)
+
+MOVE_KEYS = {KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_W, KEY_S}
+TURN_KEYS = {KEY_A, KEY_D, KEY_Q, KEY_E, KEY_Z, KEY_C}
+OBJECT_KEYS = MOVE_KEYS | TURN_KEYS | {KEY_R}
 
 HELP = """Keyboard placement: double-click an object, then
-  Home/End  Insert/Delete  PgUp/PgDn   move (away/towards, left/right, up/down)
-  F9        switch move <-> rotate (tilt, turn, roll on the same keys)
-  F10       step size        F12  restore original orientation"""
+  arrows  move along the floor      W/S  up/down       A/D  turn
+  Q/E     tilt                      Z/C  roll          R    original orientation
+  Shift   bigger steps              (double-click empty space: keys go back to the viewer)"""
 
 
 @dataclass
@@ -53,22 +64,24 @@ class _Target:
 class KeyboardMover:
     """Moves the selected object's free root body from keyboard input.
 
-    `pert` and `cam` are the viewer's MjvPerturb and MjvCamera (selection and view
-    direction). Methods mutate `d` in place and call mj_forward.
+    `pert` and `cam` are the viewer's MjvPerturb (selection) and MjvCamera (view
+    direction). `handle(key, mods)` returns True when the key was used for the object.
     """
 
     def __init__(self, m: mujoco.MjModel, d: mujoco.MjData, pert=None, cam=None, echo=print):
         self.m, self.d = m, d
         self.pert, self.cam = pert, cam
-        self.rotate = False
-        self.step = 1
         self.echo = echo
         self.qpos0 = m.qpos0.copy()
         self.status = "Keyboard placement: double-click an object"
+        self._warned: set[int] = set()
 
     # ------------------------------------------------------------------ selection
+    def selected(self) -> int:
+        return int(self.pert.select) if self.pert is not None else 0
+
     def target(self) -> _Target | None:
-        body = int(self.pert.select) if self.pert is not None else 0
+        body = self.selected()
         if body <= 0:
             return None
         m = self.m
@@ -79,65 +92,60 @@ class KeyboardMover:
                 return _Target(body, int(m.jnt_qposadr[j]), int(m.jnt_dofadr[j]))
         return None
 
+    def wants(self, key: int, mods: int = 0) -> bool:
+        """Should this key go to the object (rather than to the viewer)?"""
+        if key not in OBJECT_KEYS or mods & (MOD_CONTROL | MOD_ALT | MOD_SUPER):
+            return False
+        if self.target() is not None:
+            return True
+        body = self.selected()
+        if body > 0 and body not in self._warned:  # selected, but fixed to the world
+            self._warned.add(body)
+            self._say(f"{self.m.body(body).name} is fixed to the world; keys go to the viewer")
+        return False
+
     # ------------------------------------------------------------------ directions
     def _axes(self) -> tuple[np.ndarray, np.ndarray]:
         """Horizontal (forward, right) unit vectors of the current view."""
-        az = math.radians(float(self.cam.azimuth)) if self.cam is not None else 90.0
-        forward = np.array([math.cos(az), math.sin(az), 0.0])
-        right = np.array([math.sin(az), -math.cos(az), 0.0])
-        return forward, right
+        az = math.radians(float(self.cam.azimuth) if self.cam is not None else 90.0)
+        return np.array([math.cos(az), math.sin(az), 0.0]), np.array(
+            [math.sin(az), -math.cos(az), 0.0]
+        )
 
     # ------------------------------------------------------------------ actions
-    def on_key(self, key: int) -> None:
-        if key == KEY_F9:
-            self.rotate = not self.rotate
-            self._say(f"mode: {'rotate' if self.rotate else 'move'}")
-            return
-        if key == KEY_F10:
-            self.step = (self.step + 1) % len(STEPS)
-            name, dist, ang = STEPS[self.step]
-            self._say(f"step: {name} ({dist * 100:g} cm / {ang:g} deg)")
-            return
-        moves = (KEY_HOME, KEY_END, KEY_INSERT, KEY_DELETE, KEY_PAGE_UP, KEY_PAGE_DOWN)
-        if key not in (*moves, KEY_F12):
-            return
+    def handle(self, key: int, mods: int = 0) -> bool:
+        if not self.wants(key, mods):
+            return False
         t = self.target()
-        if t is None:
-            body = int(self.pert.select) if self.pert is not None else 0
-            self._say(
-                "double-click an object first"
-                if body <= 0
-                else f"{self.m.body(body).name} is fixed to the world and can't be moved"
-            )
-            return
-        _, dist, ang = STEPS[self.step]
+        dist, ang = BIG_STEP if mods & MOD_SHIFT else STEP
         forward, right = self._axes()
         up = np.array([0.0, 0.0, 1.0])
-        if key == KEY_F12:
+        if key == KEY_R:
             self._set_quat(t, self.qpos0[t.qadr + 3 : t.qadr + 7])
-        elif not self.rotate:
+        elif key in MOVE_KEYS:
             delta = {
-                KEY_HOME: forward,
-                KEY_END: -forward,
-                KEY_DELETE: right,
-                KEY_INSERT: -right,
-                KEY_PAGE_UP: up,
-                KEY_PAGE_DOWN: -up,
-            }[key] * dist
-            self.d.qpos[t.qadr : t.qadr + 3] += delta
+                KEY_UP: forward,
+                KEY_DOWN: -forward,
+                KEY_RIGHT: right,
+                KEY_LEFT: -right,
+                KEY_W: up,
+                KEY_S: -up,
+            }[key]
+            self.d.qpos[t.qadr : t.qadr + 3] += delta * dist
         else:
             axis, sign = {
-                KEY_HOME: (right, -1.0),  # tilt the top away from the camera
-                KEY_END: (right, 1.0),
-                KEY_INSERT: (up, 1.0),  # turn left (counter-clockwise from above)
-                KEY_DELETE: (up, -1.0),
-                KEY_PAGE_UP: (forward, -1.0),  # roll left
-                KEY_PAGE_DOWN: (forward, 1.0),
+                KEY_A: (up, 1.0),  # turn left (counter-clockwise seen from above)
+                KEY_D: (up, -1.0),
+                KEY_Q: (right, -1.0),  # tilt the top away from you
+                KEY_E: (right, 1.0),
+                KEY_Z: (forward, -1.0),  # roll left
+                KEY_C: (forward, 1.0),
             }[key]
             self._rotate(t, axis, sign * math.radians(ang))
         self.d.qvel[t.vadr : t.vadr + 6] = 0.0
         mujoco.mj_forward(self.m, self.d)
         self._report(t)
+        return True
 
     def _rotate(self, t: _Target, axis: np.ndarray, angle: float) -> None:
         """Rotate the object about its centre of mass by `angle` around world `axis`."""
@@ -163,9 +171,7 @@ class KeyboardMover:
 
     def _report(self, t: _Target) -> None:
         p = self.d.qpos[t.qadr : t.qadr + 3]
-        q = self.d.qpos[t.qadr + 3 : t.qadr + 7]
-        # yaw / pitch / roll (Z-Y-X) for display
-        w, x, y, z = q
+        w, x, y, z = self.d.qpos[t.qadr + 3 : t.qadr + 7]
         yaw = math.degrees(math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z)))
         pitch = math.degrees(math.asin(max(-1.0, min(1.0, 2 * (w * y - z * x)))))
         roll = math.degrees(math.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y)))
@@ -176,11 +182,54 @@ class KeyboardMover:
         )
 
     def _say(self, text: str) -> None:
-        mode = "rotate" if self.rotate else "move"
-        step = STEPS[self.step][0]
-        self.status = f"[{mode}, {step}] {text}"
+        self.status = text
         if self.echo:
-            self.echo(self.status)
+            self.echo(text)
+
+
+# ---------------------------------------------------------------------------- GLFW hook
+
+_KEYFUN = ctypes.CFUNCTYPE(
+    None, ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int
+)
+
+
+class _KeyHook:
+    """Sits in front of the viewer's GLFW key callback: keys for the selected object are
+    handled here (under the viewer's lock) and never reach the viewer's shortcuts."""
+
+    def __init__(self, mover: KeyboardMover):
+        self.mover = mover
+        self.sim = None
+        self.prev = None
+        self._fn = _KEYFUN(self._on_key)  # keep a reference: GLFW holds a raw pointer
+
+    def install(self) -> bool:
+        import glfw  # noqa: PLC0415  (the same GLFW library MuJoCo's viewer uses)
+
+        lib = glfw._glfw
+        lib.glfwGetCurrentContext.restype = ctypes.c_void_p
+        lib.glfwSetKeyCallback.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        lib.glfwSetKeyCallback.restype = ctypes.c_void_p
+        window = lib.glfwGetCurrentContext()
+        if not window:
+            return False
+        prev = lib.glfwSetKeyCallback(window, ctypes.cast(self._fn, ctypes.c_void_p))
+        self.prev = _KEYFUN(prev) if prev else None
+        return True
+
+    def _on_key(self, window, key, scancode, action, mods) -> None:
+        try:
+            if action in (PRESS, REPEAT) and self.mover.wants(key, mods):
+                with self.sim.lock():
+                    self.mover.handle(key, mods)
+                return
+            if action == RELEASE and key in OBJECT_KEYS and self.mover.target() is not None:
+                return  # the press was ours; keep the release away from the viewer too
+        except Exception as e:  # noqa: BLE001  (never take the viewer down)
+            print(f"keyboard placement: {e}")
+        if self.prev is not None:
+            self.prev(window, key, scancode, action, mods)
 
 
 def view(mjcf_file: str | Path, keyboard: bool = True) -> None:
@@ -189,27 +238,38 @@ def view(mjcf_file: str | Path, keyboard: bool = True) -> None:
 
     m = mujoco.MjModel.from_xml_path(str(mjcf_file))
     d = mujoco.MjData(m)
-    if not keyboard:
+    original = getattr(mv, "_Simulate", None)
+    launch_internal = getattr(mv, "_launch_internal", None)
+    if not keyboard or original is None or launch_internal is None:
+        if keyboard:
+            print("Keyboard placement unavailable with this MuJoCo version; plain viewer.")
         mv.launch(m, d)
         return
 
     mover = KeyboardMover(m, d)
-    original = getattr(mv, "_Simulate", None)
-    launch_internal = getattr(mv, "_launch_internal", None)
-    if original is None or launch_internal is None:  # viewer internals changed
-        print("Keyboard placement unavailable with this MuJoCo version; opening plain viewer.")
-        mv.launch(m, d)
-        return
+    hook = _KeyHook(mover)
+    fallback = {"on": False}
 
     def capture(*args, **kwargs):
-        sim = original(*args, **kwargs)
+        sim = original(*args, **kwargs)  # creates the window on this (the UI) thread
         mover.cam, mover.pert = args[0], args[2]  # (cam, opt, pert, user_scn, ...)
+        hook.sim = sim
+        try:
+            fallback["on"] = not hook.install()
+        except Exception:  # noqa: BLE001
+            fallback["on"] = True
+        if fallback["on"]:
+            print("Note: keys also trigger the viewer's own shortcuts on this platform.")
         return sim
+
+    def key_callback(key: int) -> None:  # only used if the GLFW hook could not be installed
+        if fallback["on"]:
+            mover.handle(key, 0)
 
     capture.MAX_GEOM = getattr(original, "MAX_GEOM", 10000)
     print(HELP)
     mv._Simulate = capture
     try:
-        launch_internal(m, d, run_physics_thread=True, key_callback=mover.on_key)
+        launch_internal(m, d, run_physics_thread=True, key_callback=key_callback)
     finally:
         mv._Simulate = original

@@ -31,13 +31,17 @@ make scene                                        # all converted assets on a fl
 
 **Placing objects with the keyboard:** double-click an object (or any of its parts), then:
 
-| keys | move mode (default) | rotate mode (F9) |
-|---|---|---|
-| Home / End | away from / towards the camera | tilt forward / back |
-| Insert / Delete | left / right | turn left / right |
-| Page Up / Page Down | up / down | roll left / right |
+| keys | action |
+|---|---|
+| arrow keys | move along the floor (up = away from you, follows the camera) |
+| W / S | raise / lower |
+| A / D | turn left / right |
+| Q / E | tilt forward / back |
+| Z / C | roll left / right |
+| R | restore the original orientation |
+| Shift + key | bigger steps (5 cm / 15° instead of 1 cm / 5°) |
 
-F10 cycles the step size (5 mm/1°, 2 cm/5°, 10 cm/15°), and F12 restores the object's original orientation. Directions follow the camera. Pause first (Space) to place objects precisely; otherwise they settle under gravity as you move them. The terminal shows the object's position and yaw/pitch/roll after each key press.
+Hold a key to keep moving. While an object is selected these keys move it instead of toggling the viewer's display options. Double-click empty space to deselect, and the keys go back to the viewer (W wireframe, S shadows, …). Pause (Space) to place things precisely. The terminal shows the object's position and yaw/pitch/roll after each move.
 
 **Adding downloaded assets:** `srmj add ~/Downloads/<folder>` → `srmj batch configs/subset.yaml --only <id>` → `make scene`.
 
