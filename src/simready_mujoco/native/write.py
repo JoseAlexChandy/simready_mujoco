@@ -11,6 +11,7 @@ import numpy as np
 from simready_mujoco.ir import Geom, JointType, MeshData, Model, ShapeType
 
 STL_MAX_FACES = 200_000  # MuJoCo's STL reader limit; larger meshes are written as OBJ
+MAX_TEXTURE = 2048  # longest side of exported textures, pixels
 VISUAL_GROUP = 2
 COLLISION_GROUP = 3
 
@@ -49,13 +50,37 @@ def write_stl(path: Path, md: MeshData) -> None:
 
 
 def write_obj(path: Path, md: MeshData) -> None:
-    """Wavefront OBJ (no face limit in MuJoCo)."""
+    """Wavefront OBJ (no face limit in MuJoCo), with UVs when the mesh has them."""
     v = np.asarray(md.vertices, dtype=np.float64)
     f = np.asarray(md.faces, dtype=np.int64) + 1
     with open(path, "w") as fh:
         fh.write("# simready-mujoco\n")
         np.savetxt(fh, v, fmt="v %.7g %.7g %.7g")
-        np.savetxt(fh, f, fmt="f %d %d %d")
+        if md.texcoords is not None:
+            np.savetxt(fh, np.asarray(md.texcoords, dtype=np.float64), fmt="vt %.7g %.7g")
+            np.savetxt(fh, np.repeat(f, 2, axis=1), fmt="f %d/%d %d/%d %d/%d")
+        else:
+            np.savetxt(fh, f, fmt="f %d %d %d")
+
+
+def export_texture(src: str, dst_dir: Path, name: str) -> str | None:
+    """Copy/convert an image to PNG (MuJoCo's texture format), downscaled to MAX_TEXTURE.
+    Returns the file name, or None if the image can't be read (e.g. EXR)."""
+    try:
+        from PIL import Image  # noqa: PLC0415
+    except ImportError:
+        return None
+    try:
+        with Image.open(src) as im:
+            im = im.convert("RGBA" if im.mode in ("RGBA", "LA", "P") else "RGB")
+            if max(im.size) > MAX_TEXTURE:
+                im.thumbnail((MAX_TEXTURE, MAX_TEXTURE))
+            dst_dir.mkdir(parents=True, exist_ok=True)
+            fname = f"{name}.png"
+            im.save(dst_dir / fname)
+            return fname
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _geom_el(parent: ET.Element, g: Geom) -> None:
@@ -69,7 +94,9 @@ def _geom_el(parent: ET.Element, g: Geom) -> None:
         _set(el, pos=list(g.pose.pos))
     if tuple(round(c, 12) for c in g.pose.quat) != (1.0, 0.0, 0.0, 0.0):
         _set(el, quat=list(g.pose.quat))
-    if g.rgba and not g.collision:
+    if g.visual_material and not g.collision:
+        el.set("material", g.visual_material)
+    elif g.rgba and not g.collision:
         _set(el, rgba=list(g.rgba))
     if g.friction is not None:
         _set(el, friction=list(g.friction))
@@ -88,6 +115,7 @@ def write_mjcf(model: Model, out_dir: str | Path) -> Path:
         "compiler",
         angle="radian",
         meshdir="meshes",
+        texturedir="textures",
         autolimits="true",
         inertiafromgeom="auto",
         balanceinertia="true",
@@ -107,8 +135,28 @@ def write_mjcf(model: Model, out_dir: str | Path) -> Path:
     ET.SubElement(col, "geom", group=str(COLLISION_GROUP), rgba="0.9 0.4 0.2 0.4", mass="0")
 
     asset = ET.SubElement(root, "asset")
+    tex_names: dict[str, str] = {}
+    for vm in model.visual_materials.values():
+        tex = None
+        if vm.texture_src:
+            if vm.texture_src not in tex_names:
+                fname = export_texture(vm.texture_src, out_dir / "textures", f"tex_{vm.name}")
+                if fname:
+                    tname = f"tex_{vm.name}"
+                    ET.SubElement(asset, "texture", name=tname, type="2d", file=fname)
+                    tex_names[vm.texture_src] = tname
+                else:
+                    model.warnings.append(
+                        f"texture not readable, colour used instead: {vm.texture_src}"
+                    )
+            tex = tex_names.get(vm.texture_src)
+        mel = ET.SubElement(asset, "material", name=vm.name)
+        # with a texture, MuJoCo multiplies it by rgba: keep white unless the asset tints it
+        _set(mel, rgba=[1.0, 1.0, 1.0, vm.rgba[3]] if tex else list(vm.rgba), texture=tex)
+        _set(mel, specular=vm.specular, shininess=vm.shininess)
+
     for md in model.meshes.values():
-        if len(md.faces) > STL_MAX_FACES:
+        if md.texcoords is not None or len(md.faces) > STL_MAX_FACES:
             fname = f"{md.name}.obj"
             write_obj(mesh_dir / fname, md)
         else:

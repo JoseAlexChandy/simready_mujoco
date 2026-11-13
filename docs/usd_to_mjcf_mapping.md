@@ -18,7 +18,8 @@ Legend: ✅ done (native backend) · 🔲 planned
 | Collision | authored colliders (primitives + meshes) | geoms in `collision` class | ✅ |
 | Concave colliders | mesh collider whose convex hull would overlap other parts | convex parts via CoACD (`--decompose auto`) | ✅ |
 | Collision filtering | joint `collisionEnabled=false`, `FilteredPairsAPI` | `<contact><exclude>` | ✅ |
-| Visuals | renderable gprims | geoms in `visual` class, material base colour | ✅ (no textures yet) |
+| Visuals | renderable gprims | geoms in `visual` class | ✅ |
+| Visual materials | UsdPreviewSurface (constant or `UsdUVTexture`), OmniPBR fallback, GeomSubset bindings, `displayColor` | `<material>` + `<texture>` (PNG), one geom per subset, OBJ with UVs | ✅ (base colour only; normal/ORM maps ignored) |
 | Physics materials | `PhysicsMaterialAPI` (+ `MjcMaterialAPI`) | geom `friction` | ✅ (restitution 🔲) |
 | MuJoCo actuators | `MjcActuator` (joint or tendon target) | `<general>` 1:1; `--actuators auto` falls back to the drive if the MjcActuator can't hold a position | ✅ |
 | UsdPhysics drives | `DriveAPI` angular/linear | PD `<general>` (per-degree → per-radian) | ✅ |

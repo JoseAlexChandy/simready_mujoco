@@ -5,6 +5,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [SemVer](ht
 ## [Unreleased]
 
 ### Added
+- Visual appearance: textures through UsdPreviewSurface → UsdUVTexture (and OmniPBR `diffuse_texture`/`diffuse_color_constant` as fallback), exported as PNG (≤2048 px) with UV-mapped OBJ meshes; meshes split per GeomSubset material (e.g. laptop: 15 materials on one mesh); roughness → shininess; meshes without UVs use the texture's mean colour. Previously only constant colours were read, so most SimReady objects rendered white.
 - `srmj add PATH`: finds USD assets (a file, a SimReady package folder, or a folder of either) and appends them to `configs/subset.yaml`, keeping its comments.
 - Scene: default layout is now a light-brown sheet on the floor with objects in rows (big at the back, small in front); the table layout is kept behind `table: {enabled: true}`.
 - Scene: robots and grippers are left out unless `robots: true`.

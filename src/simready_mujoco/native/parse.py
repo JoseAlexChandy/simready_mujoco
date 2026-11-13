@@ -35,6 +35,7 @@ from simready_mujoco.ir import (
     Pose,
     ShapeType,
     Tendon,
+    VisualMaterial,
 )
 from simready_mujoco.native.geometry import (
     AXIS_VEC,
@@ -252,6 +253,7 @@ class _Ctx:
     decompose: str = "off"
     decompose_only: dict[str, int] | None = None  # mesh -> refinement level (None = all, level 0)
     decomposed: dict[str, list[str]] = field(default_factory=dict)  # mesh -> convex part meshes
+    visual_materials: dict[str, str] = field(default_factory=dict)  # USD key -> material name
 
     def world(self, prim: Usd.Prim) -> Gf.Matrix4d:
         return self.xcache.GetLocalToWorldTransform(prim)
@@ -777,12 +779,141 @@ def _collect_visuals(ctx: _Ctx, bodies: list[str], colliders: set[str]) -> None:
         if prim.IsA(UsdGeom.Cone) or prim.IsA(UsdGeom.Plane):
             continue
         owner = _owner_body(prim, body_set)
+        if prim.IsA(UsdGeom.Mesh):
+            for g in _visual_mesh_geoms(ctx, prim, owner):
+                _attach(ctx, owner, g)
+            continue
         built = _geom_from_prim(ctx, prim, owner, collision=False)
         if built is None:
             continue
         g, _ = built
-        g.rgba = _rgba(prim)
+        mat = _visual_material(ctx, prim, prim, textured=False)
+        g.visual_material = mat
+        g.rgba = None if mat else _rgba(prim)
         _attach(ctx, owner, g)
+
+
+def _visual_material(
+    ctx: _Ctx, target: Usd.Prim, mesh_prim: Usd.Prim, textured: bool
+) -> str | None:
+    """MJCF material name for the material bound to `target` (a mesh or GeomSubset).
+    textured=False asks for an untextured variant (mesh without UVs): the texture's mean
+    colour is used instead."""
+    from simready_mujoco.native.appearance import display_color, resolve_material
+
+    mat, _ = UsdShade.MaterialBindingAPI(target).ComputeBoundMaterial()
+    if not mat and target != mesh_prim:
+        mat, _ = UsdShade.MaterialBindingAPI(mesh_prim).ComputeBoundMaterial()
+    if mat:
+        key = str(mat.GetPath())
+        spec = None
+        if key not in ctx.visual_materials:
+            spec = resolve_material(mat, ctx.names("material", mat.GetPrim().GetName()))
+            ctx.visual_materials[key] = spec.name
+            shin = None if spec.roughness is None else float(np.clip(1.0 - spec.roughness, 0, 1))
+            spec_level = None if spec.specular is None else float(np.clip(spec.specular, 0, 1))
+            ctx.model.visual_materials[spec.name] = VisualMaterial(
+                spec.name, spec.rgba, spec.texture, spec_level, shin
+            )
+            ctx.visual_materials[key + "#uv"] = spec.uv_primvar
+        name = ctx.visual_materials[key]
+        vm = ctx.model.visual_materials[name]
+        if vm.texture_src and not textured:
+            flat_key = key + "#flat"
+            if flat_key not in ctx.visual_materials:
+                flat = ctx.names("material", f"{name}_flat")
+                ctx.visual_materials[flat_key] = flat
+                ctx.model.visual_materials[flat] = VisualMaterial(
+                    flat, _mean_color(vm.texture_src, vm.rgba), None, vm.specular, vm.shininess
+                )
+            return ctx.visual_materials[flat_key]
+        return name
+    dc = display_color(mesh_prim)
+    if dc is None:
+        return None
+    key = f"displayColor:{tuple(round(c, 4) for c in dc)}"
+    if key not in ctx.visual_materials:
+        name = ctx.names("material", "display_color")
+        ctx.visual_materials[key] = name
+        ctx.model.visual_materials[name] = VisualMaterial(name, dc)
+    return ctx.visual_materials[key]
+
+
+def _mean_color(path: str, fallback) -> tuple[float, float, float, float]:
+    try:
+        from PIL import Image
+
+        with Image.open(path) as im:
+            c = np.asarray(im.convert("RGB").resize((16, 16))).reshape(-1, 3).mean(0) / 255.0
+        return (float(c[0]), float(c[1]), float(c[2]), float(fallback[3]))
+    except Exception:  # noqa: BLE001
+        return tuple(fallback)
+
+
+def _visual_mesh_geoms(ctx: _Ctx, prim: Usd.Prim, owner: str) -> list[Geom]:
+    """One visual geom per material on the mesh (GeomSubsets), with UVs when textured."""
+    from simready_mujoco.native.appearance import corner_uvs, material_groups, topology, weld
+
+    mesh = UsdGeom.Mesh(prim)
+    topo = topology(mesh)
+    if topo is None:
+        ctx.model.warnings.append(f"{prim.GetPath()}: empty mesh, skipped")
+        return []
+    rel = relative(ctx.world(prim), _owner_frame(ctx, owner))
+    rigid, scale = decompose(rel)
+    pos, quat = rigid_pose(rigid, ctx.mpu)
+    src = prim.GetPrimInPrototype() if prim.IsInstanceProxy() else prim
+    n_faces = len(mesh.GetFaceVertexCountsAttr().Get())
+    groups = material_groups(mesh, n_faces)
+    uv_cache: dict[str, np.ndarray | None] = {}
+    geoms = []
+    for gi, (bind_prim, face_ids) in enumerate(groups):
+        mask = slice(None) if face_ids is None else np.isin(topo.tri_face, face_ids)
+        tris = topo.tris[mask]
+        if len(tris) == 0:
+            continue
+        mat = _visual_material(ctx, bind_prim, prim, textured=True)
+        vm = ctx.model.visual_materials.get(mat) if mat else None
+        uvs = None
+        if vm is not None and vm.texture_src:
+            key = next(k for k, v in ctx.visual_materials.items() if v == mat)
+            uv_name = ctx.visual_materials.get(key + "#uv", "st")
+            if uv_name not in uv_cache:
+                uv_cache[uv_name] = corner_uvs(prim, uv_name, topo)
+            if uv_cache[uv_name] is not None:
+                uvs = uv_cache[uv_name][mask]
+            else:
+                mat = _visual_material(ctx, bind_prim, prim, textured=False)
+        mesh_key = (str(src.GetPath()), tuple(np.round(scale, 6)), gi, mat, uvs is not None)
+        if mesh_key not in ctx.mesh_keys:
+            v, f, tc = weld(topo.points, tris, uvs)
+            if len(np.unique(v, axis=0)) < 4:
+                ctx.model.warnings.append(
+                    f"{prim.GetPath()}: mesh part has fewer than 4 vertices (MuJoCo minimum), skipped"
+                )
+                continue
+            v, f = bake_scale(v, f, scale, ctx.mpu)
+            suffix = f"_{gi}" if len(groups) > 1 else ""
+            mname = ctx.names("mesh", f"{prim.GetName()}{suffix}")
+            ctx.model.meshes[mname] = MeshData(
+                mname,
+                v.astype(np.float32),
+                f.astype(np.int32),
+                texcoords=None if tc is None else tc.astype(np.float32),
+            )
+            ctx.mesh_keys[mesh_key] = mname
+        g = Geom(
+            ctx.names("geom", f"{prim.GetName()}{'_' + str(gi) if len(groups) > 1 else ''}"),
+            ShapeType.MESH,
+            Pose(pos, quat),
+            mesh=ctx.mesh_keys[mesh_key],
+            collision=False,
+            visual_material=mat,
+            rgba=None if mat else DEFAULT_RGBA,
+            source_path=str(prim.GetPath()),
+        )
+        geoms.append(g)
+    return geoms
 
 
 # ----------------------------------------------------------------------------- 4. inertia

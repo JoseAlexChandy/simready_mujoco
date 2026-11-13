@@ -60,6 +60,18 @@ class MeshData:
     inertia: str | None = None  # MuJoCo mesh inertia mode ("shell", "convex", ...)
     maxhullvert: int | None = None
     source: str | None = None  # for convex parts: the mesh they were decomposed from
+    texcoords: Any = None  # (N, 2) per-vertex UVs (USD convention, v=1 at image top), or None
+
+
+@dataclass
+class VisualMaterial:
+    """Render appearance for visual geoms (MJCF <material> + optional <texture>)."""
+
+    name: str
+    rgba: tuple[float, float, float, float] = (0.7, 0.7, 0.7, 1.0)
+    texture_src: str | None = None  # absolute path of the source image
+    specular: float | None = None
+    shininess: float | None = None
 
 
 @dataclass
@@ -71,6 +83,7 @@ class Geom:
     mesh: str | None = None  # MeshData.name
     collision: bool = True
     rgba: tuple[float, float, float, float] | None = None
+    visual_material: str | None = None  # VisualMaterial name (visual geoms)
     friction: tuple[float, ...] | None = None  # (slide, torsion, roll); None = MuJoCo default
     extra: dict[str, Any] = field(default_factory=dict)  # passthrough MJCF attributes (mjc:*)
     source_path: str = ""
@@ -130,6 +143,7 @@ class Model:
     bodies: list[Body] = field(default_factory=list)  # parents always listed before children
     world_geoms: list[Geom] = field(default_factory=list)  # static colliders/visuals
     meshes: dict[str, MeshData] = field(default_factory=dict)
+    visual_materials: dict[str, VisualMaterial] = field(default_factory=dict)
     actuators: list[Actuator] = field(default_factory=list)
     equalities: list[Equality] = field(default_factory=list)
     tendons: list[Tendon] = field(default_factory=list)

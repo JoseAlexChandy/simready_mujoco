@@ -307,12 +307,17 @@ def _soften_articulation(child: mujoco.MjSpec, art: ArticulationSpec) -> int:
 
 
 def _absolute_meshes(child: mujoco.MjSpec, child_xml: Path) -> None:
-    """Point mesh files at their real location (absolute) before attaching."""
+    """Point mesh and texture files at their real location (absolute) before attaching."""
     mesh_dir = child_xml.parent / (child.meshdir or "")
     for mesh in child.meshes:
         if mesh.file:
             mesh.file = str((mesh_dir / mesh.file).resolve())
     child.meshdir = ""
+    tex_dir = child_xml.parent / (child.texturedir or "")
+    for tex in child.textures:
+        if tex.file:
+            tex.file = str((tex_dir / tex.file).resolve())
+    child.texturedir = ""
 
 
 def _relative_mesh_paths(xml: str, scene_dir: Path) -> str:

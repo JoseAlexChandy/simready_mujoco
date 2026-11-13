@@ -352,3 +352,72 @@ def build_hollow_cabinet(path: Path) -> Path:
     stage.GetRootLayer().Save()
     assert np  # numpy used by trimesh transforms
     return path
+
+
+def build_textured_asset(asset_dir: Path) -> Path:
+    """A textured quad (UsdPreviewSurface <- UsdUVTexture <- primvar 'st', faceVarying, image in
+    ../Textures like SimReady) plus a box mesh whose faces use two GeomSubset materials."""
+    import numpy as np
+    from PIL import Image
+    from pxr import Sdf, UsdShade, Vt
+
+    (asset_dir / "Textures").mkdir(parents=True, exist_ok=True)
+    (asset_dir / "simready_usd").mkdir(parents=True, exist_ok=True)
+    img = np.zeros((64, 64, 3), np.uint8)
+    img[:32] = (255, 0, 0)  # top half red
+    img[32:] = (0, 0, 255)  # bottom half blue
+    Image.fromarray(img).save(asset_dir / "Textures" / "t_quad_alb.jpg")  # jpg: must be converted
+
+    path = asset_dir / "simready_usd" / "textured.usda"
+    stage = Usd.Stage.CreateNew(str(path))
+    UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+    root = UsdGeom.Xform.Define(stage, "/asset").GetPrim()
+    stage.SetDefaultPrim(root)
+    UsdPhysics.RigidBodyAPI.Apply(root)
+    UsdPhysics.MassAPI.Apply(root).CreateMassAttr(1.0)
+
+    quad = UsdGeom.Mesh.Define(stage, "/asset/quad")
+    quad.CreatePointsAttr([Gf.Vec3f(-0.1, -0.1, 0.3), Gf.Vec3f(0.1, -0.1, 0.3),
+                           Gf.Vec3f(0.1, 0.1, 0.3), Gf.Vec3f(-0.1, 0.1, 0.3)])  # fmt: skip
+    quad.CreateFaceVertexCountsAttr([4])
+    quad.CreateFaceVertexIndicesAttr([0, 1, 2, 3])
+    st = UsdGeom.PrimvarsAPI(quad).CreatePrimvar(
+        "st", Sdf.ValueTypeNames.TexCoord2fArray, UsdGeom.Tokens.faceVarying
+    )
+    st.Set(Vt.Vec2fArray([Gf.Vec2f(0, 0), Gf.Vec2f(1, 0), Gf.Vec2f(1, 1), Gf.Vec2f(0, 1)]))
+
+    mat = UsdShade.Material.Define(stage, "/asset/Looks/quad_mat")
+    pbs = UsdShade.Shader.Define(stage, "/asset/Looks/quad_mat/Principled_BSDF")
+    pbs.CreateIdAttr("UsdPreviewSurface")
+    pbs.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.25)
+    tex = UsdShade.Shader.Define(stage, "/asset/Looks/quad_mat/Albedo")
+    tex.CreateIdAttr("UsdUVTexture")
+    tex.CreateInput("file", Sdf.ValueTypeNames.Asset).Set("../Textures/t_quad_alb.jpg")
+    reader = UsdShade.Shader.Define(stage, "/asset/Looks/quad_mat/uvmap")
+    reader.CreateIdAttr("UsdPrimvarReader_float2")
+    reader.CreateInput("varname", Sdf.ValueTypeNames.Token).Set("st")
+    tex.CreateInput("st", Sdf.ValueTypeNames.Float2).ConnectToSource(
+        reader.ConnectableAPI(), "result"
+    )
+    pbs.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).ConnectToSource(
+        tex.ConnectableAPI(), "rgb"
+    )
+    mat.CreateSurfaceOutput().ConnectToSource(pbs.ConnectableAPI(), "surface")
+    UsdShade.MaterialBindingAPI.Apply(quad.GetPrim()).Bind(mat)
+
+    box = _box_mesh(stage, "/asset/box", (0.2, 0.2, 0.2), (0, 0, 0.1))
+    _collider(box.GetPrim())  # visible collider: also rendered
+    colors = {"green": (0.1, 0.8, 0.1), "yellow": (0.9, 0.8, 0.1)}
+    for i, (name, rgb) in enumerate(colors.items()):
+        m = UsdShade.Material.Define(stage, f"/asset/Looks/{name}")
+        s = UsdShade.Shader.Define(stage, f"/asset/Looks/{name}/Principled_BSDF")
+        s.CreateIdAttr("UsdPreviewSurface")
+        s.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(Gf.Vec3f(*rgb))
+        m.CreateSurfaceOutput().ConnectToSource(s.ConnectableAPI(), "surface")
+        subset = UsdGeom.Subset.CreateGeomSubset(
+            box, name, UsdGeom.Tokens.face, [0, 1, 2] if i == 0 else [3, 4, 5], "materialBind"
+        )
+        UsdShade.MaterialBindingAPI.Apply(subset.GetPrim()).Bind(m)
+    stage.GetRootLayer().Save()
+    return path
