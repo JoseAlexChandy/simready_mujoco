@@ -309,6 +309,10 @@ def parse_stage(
         contact_excludes=len(m.excludes),
         meshes=len(m.meshes),
         decomposed_meshes={k: len(v) for k, v in ctx.decomposed.items() if v},
+        mass_from={
+            src: sum(t.metadata.get("mass_source") == src for t in ctx.mass_shapes.values())
+            for src in ("mesh", "hull")
+        },
         inertial_sources={
             s: sum(b.inertial is not None and b.inertial.source == s for b in m.bodies)
             for s in ("authored", "computed", "default")
@@ -625,10 +629,7 @@ def _geom_from_prim(
         g = Geom(gname, ShapeType.MESH, Pose(pos, quat), mesh=mname)
         md = ctx.model.meshes[mname]
         if collision:
-            try:
-                tm = trimesh.Trimesh(md.vertices, md.faces, process=False).convex_hull
-            except Exception:  # noqa: BLE001  (degenerate / flat meshes)
-                tm = None
+            tm = _mass_shape(md.vertices, md.faces)
     else:
         ctx.model.warnings.append(f"{prim.GetPath()}: {prim.GetTypeName()} not supported, skipped")
         return None
@@ -638,6 +639,30 @@ def _geom_from_prim(
     if tm is not None:  # geom frame -> body frame (positions already in metres)
         tm.apply_transform(T)
     return g, tm
+
+
+def _mass_shape(vertices, faces) -> trimesh.Trimesh | None:
+    """Solid used for a collider's mass, centre of mass and inertia.
+
+    MuJoCo collides with the convex hull, but a hull is a poor mass model for hollow or
+    hooked shapes: a mug's hull fills the cup and the gap under the handle, which makes it
+    several times too heavy and drags its centre of mass toward the handle until it tips over.
+    When the mesh is closed (watertight after welding seam vertices) its own volume is used;
+    otherwise the hull is the best available estimate."""
+    try:
+        full = trimesh.Trimesh(vertices, faces, process=True)
+        full.merge_vertices()
+        if full.is_watertight and full.is_winding_consistent:
+            if full.volume < 0:
+                full.invert()
+            if full.volume > 1e-12:
+                full.metadata["mass_source"] = "mesh"
+                return full
+        hull = trimesh.Trimesh(vertices, faces, process=False).convex_hull
+        hull.metadata["mass_source"] = "hull"
+        return hull
+    except Exception:  # noqa: BLE001  (degenerate / flat meshes)
+        return None
 
 
 def _collect_colliders(ctx: _Ctx, parsed, bodies: list[str]) -> dict[str, str]:
@@ -670,7 +695,12 @@ def _collect_colliders(ctx: _Ctx, parsed, bodies: list[str]) -> dict[str, str]:
             if g.shape == ShapeType.MESH and ctx.decompose != "off":
                 parts = _convex_parts(ctx, g.mesh)
                 if parts:
-                    geoms, tm = _part_geoms(ctx, g, parts)
+                    geoms, part_tm = _part_geoms(ctx, g, parts)
+                    # the union of part hulls beats one hull, but not the closed mesh itself
+                    if tm is None or tm.metadata.get("mass_source") != "mesh":
+                        tm = part_tm
+                        if tm is not None:
+                            tm.metadata["mass_source"] = "hull"
             if tm is not None and tm.volume > 1e-12:
                 ctx.mass_shapes[path] = tm
             for geom in geoms:

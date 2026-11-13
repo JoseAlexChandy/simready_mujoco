@@ -295,3 +295,42 @@ def test_good_mjc_actuator_beats_drive_in_auto(tmp_path):
     stage.GetRootLayer().Save()
     m, _ = _load(convert(usd, tmp_path / "o"))
     assert m.nu == 1 and m.actuator_gainprm[0, 0] == pytest.approx(100.0)
+
+
+def test_mug_mass_comes_from_its_walls_not_its_hull(tmp_path):
+    """A closed mug mesh: mass and centre of mass from the ceramic walls. With the convex hull
+    it was ~6x too heavy and its centre of mass sat out toward the handle, so it tipped over."""
+    import numpy as np
+    import trimesh
+    from pxr import Gf, Usd, UsdGeom, UsdPhysics
+
+    T = trimesh.transformations.translation_matrix
+    wall = trimesh.creation.annulus(r_min=0.035, r_max=0.04, height=0.1)
+    base = trimesh.creation.cylinder(radius=0.0349, height=0.006, transform=T((0, 0, -0.047)))
+    handle = trimesh.creation.box((0.01, 0.044, 0.06), T((0, -0.063, 0)))
+    mug = trimesh.util.concatenate([wall, base, handle])  # closed, disjoint pieces
+    mug.apply_translation((0, 0, 0.05))
+
+    path = tmp_path / "mug.usda"
+    stage = Usd.Stage.CreateNew(str(path))
+    UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+    root = UsdGeom.Xform.Define(stage, "/mug").GetPrim()
+    stage.SetDefaultPrim(root)
+    UsdPhysics.RigidBodyAPI.Apply(root)
+    m = UsdGeom.Mesh.Define(stage, "/mug/mesh")
+    m.CreatePointsAttr([Gf.Vec3f(*map(float, v)) for v in mug.vertices])
+    m.CreateFaceVertexCountsAttr([3] * len(mug.faces))
+    m.CreateFaceVertexIndicesAttr([int(i) for f in mug.faces for i in f])
+    UsdPhysics.CollisionAPI.Apply(m.GetPrim())
+    UsdPhysics.MeshCollisionAPI.Apply(m.GetPrim()).CreateApproximationAttr("convexHull")
+    stage.GetRootLayer().Save()
+
+    out = convert(path, tmp_path / "o")
+    mj = mujoco.MjModel.from_xml_path(str(out))
+    b = mj.body("mug").id
+    walls = abs(mug.volume) * 1000.0
+    assert mj.body_mass[b] == pytest.approx(walls, rel=0.05)
+    assert mj.body_mass[b] < 0.5 * mug.convex_hull.volume * 1000.0
+    # centre of mass stays over the base (radius 0.04), not out at the handle
+    assert np.hypot(*mj.body_ipos[b][:2]) < 0.02

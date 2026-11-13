@@ -122,3 +122,23 @@ def test_parts_command(appliance):
     r = CliRunner().invoke(app, ["parts", str(appliance)])
     assert r.exit_code == 0, r.output
     assert "door_panel" in r.output and "No joints authored" in r.output
+
+
+def test_parts_lists_joints_kept_in_their_own_scope(tmp_path):
+    """SimReady keeps joints in a geometry-less Scope; the listing must still find them."""
+    from build import build_hollow_cabinet
+
+    usd = build_hollow_cabinet(tmp_path / "h.usda")
+    r = CliRunner().invoke(app, ["parts", str(usd)])
+    assert r.exit_code == 0, r.output
+    assert "door_hinge" in r.output and "revolute" in r.output
+    assert "-150 .. 0 deg" in r.output
+    assert "No joints authored" not in r.output
+
+
+def test_part_that_already_has_a_joint_is_refused(tmp_path):
+    from build import build_hollow_cabinet
+
+    stage, _ = open_stage(build_hollow_cabinet(tmp_path / "h.usda"))
+    with pytest.raises(ValueError, match="already moves on joint"):
+        apply_articulation(stage, [{"part": "door", "parent": "carcass"}])

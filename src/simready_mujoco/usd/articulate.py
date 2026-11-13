@@ -24,6 +24,7 @@ Every position and axis is given in the asset's own frame (its default prim), wh
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -115,6 +116,19 @@ def local_bbox(prim: Usd.Prim, root: Usd.Prim, cache=None) -> tuple[np.ndarray, 
     return np.array(rng.GetMin()), np.array(rng.GetMax())
 
 
+def _joints_on(stage: Usd.Stage, body: Sdf.Path) -> list[str]:
+    """Enabled joints that attach `body` to something (USD joint paths)."""
+    out = []
+    for p in stage.Traverse(Usd.TraverseInstanceProxies(Usd.PrimDefaultPredicate)):
+        if p.IsA(UsdPhysics.Joint):
+            j = UsdPhysics.Joint(p)
+            if j.GetJointEnabledAttr().Get() is False:
+                continue
+            if body in (*j.GetBody0Rel().GetTargets(), *j.GetBody1Rel().GetTargets()):
+                out.append(str(p.GetPath()))
+    return out
+
+
 def _parent_body(prim: Usd.Prim) -> Usd.Prim | None:
     p = prim.GetParent()
     while p and not p.IsPseudoRoot():
@@ -180,7 +194,12 @@ def apply_articulation(stage: Usd.Stage, specs: list[dict | PartJoint]) -> list[
     for spec in parsed:
         part = resolve_prim(stage, root, spec.part)
         if part.HasAPI(UsdPhysics.RigidBodyAPI):
-            raise ValueError(f"articulation: {part.GetPath()} is already a rigid body")
+            existing = _joints_on(stage, part.GetPath())
+            if existing:
+                raise ValueError(
+                    f"articulation: {part.GetPath()} already moves on joint "
+                    f"{existing[0]}; it needs no spec (or disable that joint first)"
+                )
         parent = resolve_prim(stage, root, spec.parent) if spec.parent else _parent_body(part)
         if parent is None:
             raise ValueError(
@@ -225,8 +244,8 @@ def apply_articulation(stage: Usd.Stage, specs: list[dict | PartJoint]) -> list[
         a_world /= np.linalg.norm(a_world)
         q_joint = _rotation_x_to(a_world)
 
-        for body in (part,):
-            UsdPhysics.RigidBodyAPI.Apply(body)
+        if not part.HasAPI(UsdPhysics.RigidBodyAPI):
+            UsdPhysics.RigidBodyAPI.Apply(part)
         for c in extra:
             c.CreateAttribute(OWNER_ATTR, Sdf.ValueTypeNames.String, custom=True).Set(
                 str(part.GetPath())
@@ -297,8 +316,8 @@ def apply_articulation(stage: Usd.Stage, specs: list[dict | PartJoint]) -> list[
 
 
 def describe_parts(stage: Usd.Stage, max_depth: int = 4) -> list[dict]:
-    """Rows for `srmj parts`: prims under the default prim that have geometry (bounds in the
-    asset frame, metres, and physics role) plus authored joints."""
+    """Rows for `srmj parts`: prims under the default prim that have geometry, with bounds in
+    the asset frame (metres) and physics role (body, collider, mass = authored mass)."""
     from pxr import UsdShade  # noqa: PLC0415
 
     root = stage.GetDefaultPrim()
@@ -312,30 +331,29 @@ def describe_parts(stage: Usd.Stage, max_depth: int = 4) -> list[dict]:
     it = iter(rng)
     for p in it:
         depth = p.GetPath().pathElementCount - depth0
-        rel = "." if p == root else str(p.GetPath().MakeRelativePath(root.GetPath()))
-        if p.IsA(UsdShade.Material) or p.IsA(UsdShade.Shader):
+        if p.IsA(UsdShade.Material) or p.IsA(UsdShade.Shader) or not p.IsA(UsdGeom.Imageable):
             it.PruneChildren()
             continue
-        if p.IsA(UsdPhysics.Joint):
-            rows.append({"path": rel, "depth": depth, "type": p.GetTypeName(), "role": "joint"})
-            continue
-        if not p.IsA(UsdGeom.Imageable):
+        if depth > max_depth:
+            it.PruneChildren()
             continue
         box = local_bbox(p, root, bbc)
         if box is None:
-            it.PruneChildren()
-            continue
+            continue  # e.g. a Scope holding joints: keep walking, list nothing
         roles = []
         if p.HasAPI(UsdPhysics.RigidBodyAPI):
             roles.append("body")
         if p.HasAPI(UsdPhysics.CollisionAPI):
             roles.append("collider")
+        m = p.GetAttribute("physics:mass")
+        if m and m.HasAuthoredValue():
+            roles.append(f"mass {float(m.Get()) * UsdPhysics.GetStageKilogramsPerUnit(stage):g}kg")
         if UsdGeom.Imageable(p).ComputePurpose() == UsdGeom.Tokens.guide:
             roles.append("guide")
         lo, hi = box[0] * mpu, box[1] * mpu
         rows.append(
             {
-                "path": rel,
+                "path": "." if p == root else str(p.GetPath().MakeRelativePath(root.GetPath())),
                 "depth": depth,
                 "type": p.GetTypeName(),
                 "role": ",".join(roles),
@@ -343,6 +361,41 @@ def describe_parts(stage: Usd.Stage, max_depth: int = 4) -> list[dict]:
                 "size": (hi - lo).round(3).tolist(),
             }
         )
-        if depth >= max_depth:
-            it.PruneChildren()
+    return rows
+
+
+def describe_joints(stage: Usd.Stage) -> list[dict]:
+    """Every UsdPhysics joint on the composed stage: what it connects and how it moves."""
+    rows = []
+    for p in stage.Traverse(Usd.TraverseInstanceProxies(Usd.PrimDefaultPredicate)):
+        if not p.IsA(UsdPhysics.Joint):
+            continue
+        j = UsdPhysics.Joint(p)
+
+        def target(rel):
+            t = rel.GetTargets()
+            return t[0].name if t else "world"
+
+        kind = p.GetTypeName().replace("Physics", "").replace("Joint", "").lower() or "d6"
+        row = {
+            "joint": p.GetName(),
+            "type": kind,
+            "connects": f"{target(j.GetBody0Rel())} -> {target(j.GetBody1Rel())}",
+            "axis": "",
+            "limits": "",
+        }
+        if p.IsA(UsdPhysics.RevoluteJoint) or p.IsA(UsdPhysics.PrismaticJoint):
+            api = (
+                UsdPhysics.RevoluteJoint(p)
+                if p.IsA(UsdPhysics.RevoluteJoint)
+                else (UsdPhysics.PrismaticJoint(p))
+            )
+            row["axis"] = str(api.GetAxisAttr().Get() or "")
+            lo, hi = api.GetLowerLimitAttr().Get(), api.GetUpperLimitAttr().Get()
+            if lo is not None and hi is not None and math.isfinite(lo) and math.isfinite(hi):
+                unit = "deg" if kind == "revolute" else "units"
+                row["limits"] = f"{lo:g} .. {hi:g} {unit}"
+        if not j.GetJointEnabledAttr().Get():
+            row["type"] += " (disabled)"
+        rows.append(row)
     return rows

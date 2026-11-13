@@ -603,7 +603,7 @@ def parts(
 def _print_parts(title: str, stage, depth: int, articulation) -> None:
     from rich.table import Table
 
-    from simready_mujoco.usd.articulate import describe_parts
+    from simready_mujoco.usd.articulate import describe_joints, describe_parts
 
     rows = describe_parts(stage, max_depth=depth)
     t = Table(title=f"{title}  (metres, asset frame)", title_justify="left")
@@ -619,11 +619,18 @@ def _print_parts(title: str, stage, depth: int, articulation) -> None:
     from rich.console import Console
 
     Console(width=max(console.width, 120)).print(t)  # full names even in narrow terminals
-    joints = sum(r["role"] == "joint" for r in rows)
+    joints = describe_joints(stage)
+    if joints:
+        jt = Table(title="joints", title_justify="left")
+        for col in ("joint", "type", "connects", "axis", "limits"):
+            jt.add_column(col, no_wrap=True)
+        for j in joints:
+            jt.add_row(j["joint"], j["type"], j["connects"], j["axis"], j["limits"])
+        Console(width=max(console.width, 120)).print(jt)
     if articulation:
         console.print(f"[green]{len(articulation)} joint(s) added from the config[/]\n")
     elif joints:
-        console.print(f"[green]{joints} joint(s) authored in the asset[/]\n")
+        console.print(f"[green]{len(joints)} joint(s) authored in the asset[/]\n")
     else:
         console.print(
             "[yellow]No joints authored.[/] To make a part move, add to this asset in the config:\n"
