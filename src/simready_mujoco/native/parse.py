@@ -13,7 +13,6 @@ Order of work:
 
 from __future__ import annotations
 
-import contextlib
 import math
 from collections import deque
 from dataclasses import dataclass, field
@@ -666,11 +665,7 @@ def _mass_shape(vertices, faces) -> trimesh.Trimesh | None:
             # Only pinholes count as a repair; a real opening (a rim, a spout) means the mesh
             # is a surface, not a solid. The area test keeps this independent of how capable
             # the installed trimesh's hole filling is.
-            area = float(full.area)
-            with contextlib.suppress(Exception):
-                trimesh.repair.fill_holes(full)
-            if float(full.area) - area > MAX_REPAIR_AREA * area:
-                full = None
+            full = _fill_pinholes(full, MAX_REPAIR_AREA)
         if full is not None and full.is_watertight and full.is_winding_consistent:
             if full.volume < 0:
                 full.invert()
@@ -684,6 +679,63 @@ def _mass_shape(vertices, faces) -> trimesh.Trimesh | None:
         return shell
     except Exception:  # noqa: BLE001  (degenerate / flat meshes)
         return None
+
+
+def _fill_pinholes(tm: trimesh.Trimesh, max_area_fraction: float) -> trimesh.Trimesh | None:
+    """Close every boundary loop with a triangle fan, if together they add at most
+    `max_area_fraction` of the surface area. Returns the closed mesh, or None when the holes
+    are too big (the mesh is a surface) or the boundary isn't made of simple loops.
+    Done here rather than with trimesh.repair.fill_holes, whose reach varies by version."""
+    faces = np.asarray(tm.faces)
+    directed = np.concatenate([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]])
+    present = {tuple(e) for e in directed.tolist()}
+    # A boundary edge a->b has no b->a. The fill runs b->a to keep the winding. Loops are
+    # traced by using up edges, so holes that share a vertex (a fan centre) still close.
+    out: dict[int, list[int]] = {}
+    for a, b in directed.tolist():
+        if (b, a) not in present:
+            out.setdefault(b, []).append(a)
+    if not out:
+        return tm
+    v = np.asarray(tm.vertices)
+    new_faces = []
+    for start in list(out):
+        while out.get(start):
+            loop, cur = [start], out[start].pop()
+            while cur != start:
+                if not out.get(cur) or len(loop) > len(directed):
+                    return None  # open chain: not a closed boundary
+                loop.append(cur)
+                cur = out[cur].pop()
+            for cycle in _simple_cycles(loop):
+                if len(cycle) < 3:
+                    return None
+                new_faces += [(cycle[0], cycle[i], cycle[i + 1]) for i in range(1, len(cycle) - 1)]
+    added = np.asarray(new_faces)
+    tri = v[added]
+    added_area = 0.5 * np.linalg.norm(
+        np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]), axis=1
+    )
+    if added_area.sum() > max_area_fraction * float(tm.area):
+        return None
+    return trimesh.Trimesh(v, np.vstack([faces, added]), process=False)
+
+
+def _simple_cycles(loop: list[int]) -> list[list[int]]:
+    """Split a closed vertex walk that revisits vertices (holes sharing a vertex) into simple
+    cycles, each filled on its own."""
+    cycles, stack, pos = [], [], {}
+    for v in [*loop, loop[0]]:
+        if v in pos:
+            i = pos[v]
+            cycles.append(stack[i:])
+            for u in stack[i + 1 :]:
+                del pos[u]
+            del stack[i + 1 :]
+        else:
+            pos[v] = len(stack)
+            stack.append(v)
+    return [c for c in cycles if c]
 
 
 def _shell_mass_properties(tm: trimesh.Trimesh) -> tuple[float, np.ndarray, np.ndarray]:

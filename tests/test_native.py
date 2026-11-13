@@ -353,3 +353,22 @@ def test_mug_mass_comes_from_its_walls_not_its_hull(tmp_path, case):
         assert 0.2 * walls < mj.body_mass[b] < 3 * walls
     # centre of mass stays over the base (radius 0.04), not out at the handle
     assert np.hypot(*mj.body_ipos[b][:2]) < 0.02
+
+
+def test_pinholes_sharing_a_vertex_are_filled_separately():
+    """Two missing triangles of a fan cap share its centre vertex; each is filled on its own,
+    and big openings are left alone (the mesh is then read as a surface)."""
+    import trimesh
+
+    from simready_mujoco.native.parse import _fill_pinholes, _simple_cycles
+
+    assert _simple_cycles([1, 2, 3, 1, 4, 5]) == [[1, 2, 3], [1, 4, 5]]
+    cyl = trimesh.creation.cylinder(radius=0.05, height=0.1, sections=64)
+    cyl.merge_vertices()
+    cap = np.flatnonzero(cyl.triangles_center[:, 2] > 0.049)
+    holed = trimesh.Trimesh(cyl.vertices, np.delete(cyl.faces, cap[[0, 5]], axis=0), process=False)
+    filled = _fill_pinholes(holed, 0.01)
+    assert filled is not None and filled.is_watertight
+    assert filled.volume == pytest.approx(cyl.volume, rel=1e-6)
+    open_top = trimesh.Trimesh(cyl.vertices, np.delete(cyl.faces, cap, axis=0), process=False)
+    assert _fill_pinholes(open_top, 0.01) is None
