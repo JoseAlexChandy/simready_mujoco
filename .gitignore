@@ -33,3 +33,6 @@ outputs/
 !.vscode/extensions.json
 !.vscode/launch.json
 !.vscode/tasks.json
+MUJOCO_LOG.TXT
+parts.txt
+material_report.txt
