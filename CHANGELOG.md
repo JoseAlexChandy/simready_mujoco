@@ -5,6 +5,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [SemVer](ht
 ## [Unreleased]
 
 ### Added
+- `make screenshots` (`scripts/render_scene.py`): offscreen renders of the scene for the README. It settles the scene, opens doors, drawers and lids to 55% of their range (motors follow), then renders an overview and close-ups framed around chosen assets. The README shows them at the top.
 - First asset release, `assets-2026-11-13` (~2.3 GB). `make fetch-models` gets only the converted models and scene (~400 MB); `make fetch-assets` adds the source USD (`scripts/fetch_assets.sh --only outputs|data`). The README lists what each contains.
 - Sharing the converted assets: `make pack` / `make release` pack `outputs/` and `data/koyo` into gzip archives split under GitHub's 2 GB limit, with SHA256 checksums and a generated `ATTRIBUTION.md` (licence, package and source per asset, plus a note of the changes, as CC-BY-4.0 requires), and upload them as a GitHub Release `assets-YYYY-MM-DD`. `make fetch-assets` (`scripts/fetch_assets.sh`) downloads the newest one into a clone with curl only, checks the checksums and unpacks it. Packing refuses a config with machine-specific absolute paths.
 - README rewritten as a step-by-step guide for a fresh clone: install, convert one asset, convert many (zips or SimReady links), build the scene, viewer and keyboard controls, use the objects in your own MuJoCo environment, troubleshooting.

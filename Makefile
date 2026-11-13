@@ -1,7 +1,7 @@
 PY ?= .venv/bin/python
 SRMJ ?= .venv/bin/srmj
 
-.PHONY: help setup doctor test lint subset scene roundtrip clean pack release fetch-assets fetch-models
+.PHONY: help setup doctor test lint subset scene roundtrip clean pack release fetch-assets fetch-models screenshots
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
@@ -33,6 +33,9 @@ scene: ## Put all converted assets on a floor + table and open the viewer
 
 roundtrip: ## Validate the converter: Menagerie FR3 -> USD -> MJCF, compared with the original
 	PATH="$(CURDIR)/.venv/bin:$$PATH" scripts/roundtrip_menagerie.sh
+
+screenshots: ## Render docs/images/scene_*.jpg from outputs/scene/scene.xml (for the README)
+	$(PY) scripts/render_scene.py
 
 pack: ## Pack outputs/ and data/koyo into dist/ for a release (see scripts/pack_assets.sh)
 	scripts/pack_assets.sh

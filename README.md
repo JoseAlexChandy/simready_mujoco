@@ -1,8 +1,19 @@
 # simready-mujoco
 
+![Kitchen scene: 60 converted SimReady assets in MuJoCo, doors and drawers open](docs/images/scene_overview.jpg)
+
 Bring [NVIDIA SimReady Central](https://huggingface.co/spaces/nvidia/simready-central) OpenUSD assets into **MuJoCo** with their physics intact: mass, friction, joints, drives, collisions and textures. Then use them in an interactive scene where doors open, buttons spring back, and objects can be dragged with the mouse or placed with the keyboard.
 
 The converter reads each asset's MuJoCo runtime layer (`mjcPhysics`) and its UsdPhysics data, and has been checked against MuJoCo Menagerie ([docs/validation.md](docs/validation.md)). Per-feature coverage is listed in [docs/usd_to_mjcf_mapping.md](docs/usd_to_mjcf_mapping.md). [LightwheelAI/usd2mjcf](https://github.com/LightwheelAI/usd2mjcf) is kept as a pinned submodule, as a baseline for comparison.
+
+| | |
+|---|---|
+| ![Display shelf with bread and wicker baskets](docs/images/scene_closeup_1.jpg) | ![Cutlery caddy, fruit bowl, plate, cutting board and eggs](docs/images/scene_closeup_2.jpg) |
+| *Display shelf: baskets on each tier, fruit inside* | *Cutlery upright in the caddy, fruit in the bowl, breakfast on plate and board* |
+| ![Microwave, laptop, air fryer and toaster with doors and lids open](docs/images/scene_closeup_3.jpg) | ![Refrigerator and file cabinet with doors and drawers open](docs/images/scene_closeup_4.jpg) |
+| *Appliances: doors, lids and baskets are working joints* | *Fridge and file cabinet: doors swing, drawers slide* |
+
+The pictures are rendered from the scene with `make screenshots` (section 5).
 
 **Contents**
 
@@ -175,6 +186,8 @@ Chains work: fruit in a basket on a shelf. Containers need hollow colliders, so 
 
 To rebuild without opening the viewer, run `srmj scene configs/scene.yaml`. To open the last scene, run `srmj view outputs/scene/scene.xml`.
 
+**Pictures for the README:** `make screenshots` renders the scene offscreen into `docs/images/`. It lets the scene settle, opens every door, drawer and lid partway, and renders an overview plus close-ups. To choose the close-ups yourself, run `python scripts/render_scene.py --focus d00326 "d00249 d00270"`; ids in one argument share a picture.
+
 ## 6. Viewer controls
 
 Open any model with **`srmj view FILE.xml`**, or `make scene` for the full scene.
@@ -293,6 +306,7 @@ The scene's "hand feel" is added by `srmj scene` and isn't stored in the object 
 | `scripts/unpack.sh SRC [DEST]` | unzips downloaded archives into `data/` |
 | `scripts/contact_sheet.py` | renders every converted asset into one labelled picture |
 | `scripts/mass_probe.py ID` | compares an asset's authored mass with its hull and its real shape |
+| `make screenshots` | renders `docs/images/scene_*.jpg` from the scene (`scripts/render_scene.py`) |
 | `make fetch-models` / `make fetch-assets` | downloads the newest `assets-*` release: converted models only, or models plus source USD |
 | `make pack` / `make release` | packs `outputs/` and `data/koyo` (with attribution and checksums) and uploads them as a GitHub Release |
 
