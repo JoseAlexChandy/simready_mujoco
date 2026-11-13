@@ -638,6 +638,7 @@ def _place_nested(nested: list[Item], placed: list[Item]) -> tuple[list[dict], l
             )
             it.pos, it.quat = tuple(float(v) for v in pos), tuple(float(v) for v in quat)
             it.surface = f"{'in' if 'in' in it.place else 'on'} {sp.target}"
+            it.place = {("on" if k is True else k): v for k, v in it.place.items()}
             lo, hi = shape(it).lo, shape(it).hi
             it.bbox_min, it.bbox_max = tuple(lo), tuple(hi)
             placed.append(it)

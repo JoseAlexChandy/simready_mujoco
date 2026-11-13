@@ -37,6 +37,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [SemVer](ht
 - ADR 0003 (native backend semantics); docs/validation.md.
 
 ### Fixed (found on real SimReady assets)
+- `place: {on: ID}` failed to load ("unknown keys [True]"): YAML 1.1 reads a bare `on` as the boolean true. A `True` key is now read as `on`. Tested with real YAML.
 - kitchenware_mug_d01 tipped over: its **authored** MassAPI values (on the collider) put the centre of mass 37 mm toward the handle, past the edge of its base. The real shape's is 1 mm off-axis and the hull's 9 mm, so the file's values are simply wrong. Two corrections now apply to authored mass properties (`authored_mass: auto`, the default):
   - **Centre of mass outside the base.** When the object at its authored rest pose would topple, but its real shape would not, the centre of mass and inertia come from the shape and the authored mass is kept (mug_d01). kitchenware_mug_e01's centre of mass is 10 mm off but still over its base, so it is left alone.
   - **Hull-derived values.** When the authored centre of mass sits on the colliders' hull centroid, far from the real shape's, the mass is also rescaled by real volume / hull volume.

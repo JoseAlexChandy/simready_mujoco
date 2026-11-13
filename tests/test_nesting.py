@@ -70,6 +70,18 @@ def test_spec_parsing():
         NestSpec.parse({"on": "x", "inside": True})
 
 
+def test_yaml_on_key_is_not_a_boolean(assets, tmp_path):
+    """YAML 1.1 reads a bare `on` as true: {on: bowl} loads as {True: 'bowl'}."""
+    import yaml
+
+    place = yaml.safe_load("apple: {on: bowl, level: 1}\nknife: {in: bowl, upright: true}")
+    assert NestSpec.parse(place["apple"]).target == "bowl"
+    items = [Item("bowl", assets["bowl"]), Item("apple", assets["apple"], place=place["apple"])]
+    rep = build_scene(items, tmp_path / "s" / "scene.xml")
+    assert rep.nested[0]["target"] == "bowl" and not rep.nesting_problems
+    assert [i for i in rep.items if i["id"] == "apple"][0]["surface"] == "on bowl"
+
+
 def test_apple_lands_inside_the_bowl(assets, tmp_path):
     items = [Item("bowl", assets["bowl"]), Item("apple", assets["apple"], place={"in": "bowl"})]
     rep = build_scene(items, tmp_path / "s" / "scene.xml")

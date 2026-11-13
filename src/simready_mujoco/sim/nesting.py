@@ -49,6 +49,8 @@ class NestSpec:
     def parse(cls, value) -> NestSpec | None:
         if not isinstance(value, dict):
             return None
+        # YAML 1.1 reads a bare `on` key as the boolean true: {on: bowl} -> {True: 'bowl'}
+        value = {("on" if k is True else k): v for k, v in value.items()}
         keys = set(value) - {"on", "in", "level", "at", "upright", "yaw"}
         if keys:
             raise ValueError(f"place: unknown keys {sorted(keys)} in {value}")
