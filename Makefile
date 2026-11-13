@@ -1,7 +1,7 @@
 PY ?= .venv/bin/python
 SRMJ ?= .venv/bin/srmj
 
-.PHONY: help setup doctor test lint subset scene roundtrip clean pack release fetch-assets
+.PHONY: help setup doctor test lint subset scene roundtrip clean pack release fetch-assets fetch-models
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
@@ -42,8 +42,11 @@ release: pack ## Upload dist/ as GitHub Release $(TAG) (needs gh, logged in)
 	gh release create $(TAG) dist/* --title "Converted assets $(TAG)" \
 	  --notes "Converted MuJoCo models (outputs/) and downloaded assets (data/). Get them in a clone with: make fetch-assets. Licences and sources: ATTRIBUTION.md."
 
-fetch-assets: ## Download and unpack the newest assets-* release into outputs/ and data/
+fetch-assets: ## Download the newest assets-* release: converted models AND source USD (~2.3 GB)
 	scripts/fetch_assets.sh
+
+fetch-models: ## Download only the converted models and scene (outputs/, ~400 MB)
+	scripts/fetch_assets.sh --only outputs
 
 clean: ## Delete conversion output (keeps downloaded assets)
 	rm -rf outputs

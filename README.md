@@ -31,14 +31,21 @@ make doctor       # every line should show ✓
 make test         # all tests should pass
 ```
 
-**Get the converted assets (optional, ~1 GB download).** The repo holds code only. The converted models, the kitchen scene and Koyo's downloaded assets are published as a GitHub Release:
+**Get the converted assets (optional).** The repo holds code only. The converted models, the kitchen scene and the source USD assets are published as a GitHub Release, [`assets-2026-11-13`](https://github.com/JoseAlexChandy/simready_mujoco/releases/tag/assets-2026-11-13):
+
+| Command | What you get | Download | On disk |
+|---|---|---|---|
+| `make fetch-models` | `outputs/`: about 60 converted MuJoCo models (XML, meshes, textures) and the kitchen scene | ~400 MB | ~730 MB |
+| `make fetch-assets` | the above **plus** `data/koyo/`: the 52 source USD assets, to re-convert or change | ~2.3 GB | ~2.9 GB |
 
 ```bash
-make fetch-assets     # downloads, checks and unpacks into outputs/ and data/
-srmj view outputs/scene/scene.xml
+make fetch-models                  # or: make fetch-assets
+srmj view outputs/scene/scene.xml  # the kitchen, ready to use
 ```
 
-Skip this to start from your own USD files (sections 3–4). Licences and sources for every asset are in `outputs/ATTRIBUTION.md`; all are CC-BY-4.0.
+Downloads are checked against SHA256 checksums. If one is interrupted, run the command again: files already downloaded are kept. The NVIDIA SimReady assets added by link (fridge, file cabinet, robots, …) aren't in the release: `srmj batch` downloads them from Hugging Face when needed. Licences and sources for every asset are in `outputs/ATTRIBUTION.md`; all are CC-BY-4.0.
+
+Skip this to start from your own USD files (sections 3–4).
 
 Every later step assumes you're in the repo folder with the environment active. Your prompt should start with `(.venv)`. **Open a new terminal → run `cd simready-mujoco && source .venv/bin/activate` first.**
 
@@ -286,7 +293,7 @@ The scene's "hand feel" is added by `srmj scene` and isn't stored in the object 
 | `scripts/unpack.sh SRC [DEST]` | unzips downloaded archives into `data/` |
 | `scripts/contact_sheet.py` | renders every converted asset into one labelled picture |
 | `scripts/mass_probe.py ID` | compares an asset's authored mass with its hull and its real shape |
-| `make fetch-assets` | downloads the newest `assets-*` release into `outputs/` and `data/` |
+| `make fetch-models` / `make fetch-assets` | downloads the newest `assets-*` release: converted models only, or models plus source USD |
 | `make pack` / `make release` | packs `outputs/` and `data/koyo` (with attribution and checksums) and uploads them as a GitHub Release |
 
 ### Python API
@@ -331,7 +338,9 @@ After converting more assets, share them with:
 make release          # packs dist/ and creates GitHub Release assets-YYYY-MM-DD (needs gh)
 ```
 
-The archives are split under GitHub's 2 GB file limit. `ATTRIBUTION.md`, generated from each asset's package info, is included, as CC-BY requires. SimReady assets added by link aren't packed, because `srmj batch` downloads them again. Clones get the new release with `make fetch-assets`.
+The first release was ~2.3 GB: outputs 395 MB and data 1.9 GB, gzip-compressed. A second release on the same day needs a different tag: `make release TAG=assets-2026-11-13b`.
+
+The archives are split under GitHub's 2 GB file limit. `ATTRIBUTION.md`, generated from each asset's package info, is included, as CC-BY requires. SimReady assets added by link aren't packed, because `srmj batch` downloads them again. Clones get the newest release with `make fetch-models` or `make fetch-assets`.
 
 ## Licence
 
