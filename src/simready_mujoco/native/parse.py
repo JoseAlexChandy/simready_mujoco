@@ -13,6 +13,7 @@ Order of work:
 
 from __future__ import annotations
 
+import contextlib
 import math
 from collections import deque
 from dataclasses import dataclass, field
@@ -642,6 +643,7 @@ def _geom_from_prim(
 
 
 SHELL_THICKNESS = 0.003  # m, wall thickness assumed for open meshes (see _mass_shape)
+MAX_REPAIR_AREA = 0.01  # hole filling may add at most this fraction of the surface area
 
 
 def _mass_shape(vertices, faces) -> trimesh.Trimesh | None:
@@ -661,8 +663,15 @@ def _mass_shape(vertices, faces) -> trimesh.Trimesh | None:
         full = trimesh.Trimesh(vertices, faces, process=True)
         full.merge_vertices(merge_tex=True, merge_norm=True, digits_vertex=5)  # 10 um welds
         if not full.is_watertight:
-            trimesh.repair.fill_holes(full)
-        if full.is_watertight and full.is_winding_consistent:
+            # Only pinholes count as a repair; a real opening (a rim, a spout) means the mesh
+            # is a surface, not a solid. The area test keeps this independent of how capable
+            # the installed trimesh's hole filling is.
+            area = float(full.area)
+            with contextlib.suppress(Exception):
+                trimesh.repair.fill_holes(full)
+            if float(full.area) - area > MAX_REPAIR_AREA * area:
+                full = None
+        if full is not None and full.is_watertight and full.is_winding_consistent:
             if full.volume < 0:
                 full.invert()
             if full.volume > 1e-12:

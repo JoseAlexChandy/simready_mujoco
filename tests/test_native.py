@@ -313,9 +313,13 @@ def test_mug_mass_comes_from_its_walls_not_its_hull(tmp_path, case):
     handle = trimesh.creation.box((0.01, 0.044, 0.06), T((0, -0.063, 0)))
     mug = trimesh.util.concatenate([wall, base, handle])  # closed, disjoint pieces
     walls = abs(mug.volume) * 1000.0
-    if case == "small_holes":  # single missing triangles: welded and filled -> solid
+    if case == "small_holes":  # a few isolated missing triangles: filled -> solid
         keep = np.ones(len(mug.faces), bool)
-        keep[::5] = False
+        in_base = np.flatnonzero(
+            (mug.triangles_center[:, 2] < -0.049)
+            & (np.hypot(*mug.triangles_center[:, :2].T) < 0.03)
+        )
+        keep[in_base[[0, len(in_base) // 2]]] = False  # two small floor triangles
         mug = trimesh.Trimesh(mug.vertices, mug.faces[keep], process=False)
     elif case == "open_rim":  # the wall's top ring is missing: too big to fill -> thin shell
         top = mug.triangles_center[:, 2] > 0.0499
