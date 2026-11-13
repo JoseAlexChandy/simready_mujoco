@@ -1146,8 +1146,9 @@ def _compute_inertials(ctx: _Ctx, bodies: list[str]) -> None:
             quat=q,
             source="authored" if authored else "computed",
         )
-        if authored and ctx.authored_mass == "auto":
-            _correct_hull_derived_mass(ctx, body, colliders)
+        auto = authored and ctx.authored_mass == "auto"
+        if auto and not _correct_hull_derived_mass(ctx, body, colliders):
+            _correct_com_outside_base(ctx, b, body, colliders)
 
 
 def _shape_props(tm: trimesh.Trimesh) -> tuple[float, np.ndarray, np.ndarray]:
@@ -1158,7 +1159,7 @@ def _shape_props(tm: trimesh.Trimesh) -> tuple[float, np.ndarray, np.ndarray]:
     return float(tm.volume), np.asarray(tm.center_mass), np.asarray(tm.moment_inertia)
 
 
-def _correct_hull_derived_mass(ctx: _Ctx, body: Body, colliders: list[str]) -> None:
+def _correct_hull_derived_mass(ctx: _Ctx, body: Body, colliders: list[str]) -> bool:
     """Replace authored mass properties that were evidently computed from convex hulls.
 
     Fingerprint: the authored centre of mass coincides with the hulls' centroid, while the
@@ -1173,19 +1174,19 @@ def _correct_hull_derived_mass(ctx: _Ctx, body: Body, colliders: list[str]) -> N
     hulls = [ctx.hull_shapes[c] for c in colliders]
     vh = sum(float(h.volume) for h in hulls)
     if vh <= 0:
-        return
+        return False
     ch = sum(float(h.volume) * np.asarray(h.center_mass) for h in hulls) / vh
     props = [_shape_props(ctx.mass_shapes[c]) for c in colliders]
     vm = sum(p[0] for p in props)
     if vm <= 0:
-        return
+        return False
     cm = sum(p[0] * p[1] for p in props) / vm
     size = float(max(np.ptp(np.vstack([h.vertices for h in hulls]), axis=0)))
     com_auth = np.asarray(body.inertial.pos)
     on_hull = np.linalg.norm(com_auth - ch) < max(0.002, 0.02 * size)
     shape_differs = np.linalg.norm(ch - cm) > max(0.005, 0.05 * size)
     if not (on_hull and shape_differs and vm < 0.9 * vh):
-        return
+        return False
     old_mass = body.inertial.mass
     mass = old_mass * vm / vh
     rho = mass / vm
@@ -1223,6 +1224,88 @@ def _correct_hull_derived_mass(ctx: _Ctx, body: Body, colliders: list[str]) -> N
         f"{old_mass:.3f} -> {mass:.3f} kg, centre of mass moved {shift * 1000:.0f} mm "
         "(authored_mass: keep to use the file's values)"
     )
+    return True
+
+
+def _shape_inertial(ctx: _Ctx, colliders: list[str], mass: float):
+    """(centre of mass, principal moments, quat) of the colliders' real shapes at `mass`."""
+    props = [_shape_props(ctx.mass_shapes[c]) for c in colliders]
+    vm = sum(p[0] for p in props)
+    cm = sum(p[0] * p[1] for p in props) / vm
+    rho = mass / vm
+    inertia = np.zeros((3, 3))
+    for v, c, i in props:
+        d = np.asarray(c) - cm
+        inertia += rho * (np.asarray(i) + v * (np.dot(d, d) * np.eye(3) - np.outer(d, d)))
+    evals, evecs = np.linalg.eigh(inertia)
+    if np.linalg.det(evecs) < 0:
+        evecs[:, 0] = -evecs[:, 0]
+    h = np.eye(4)
+    h[:3, :3] = evecs
+    quat = tuple(float(x) for x in trimesh.transformations.quaternion_from_matrix(h))
+    return cm, tuple(float(max(e, MIN_INERTIA)) for e in evals), quat
+
+
+def _correct_com_outside_base(ctx: _Ctx, path: str, body: Body, colliders: list[str]) -> bool:
+    """An object authored at rest whose authored centre of mass lies outside its base, while
+    its real shape's lies inside, would topple the moment it is placed (SimReady
+    kitchenware_mug_d01: authored centre of mass 37 mm toward the handle, real one 1 mm).
+    Keep the authored mass, take the centre of mass and inertia from the shape."""
+    if not colliders or any(
+        c not in ctx.hull_shapes or c not in ctx.mass_shapes for c in colliders
+    ):
+        return False
+    from scipy.spatial import ConvexHull  # noqa: PLC0415
+
+    up_w = np.array([0.0, 1.0, 0.0] if UsdGeom.GetStageUpAxis(ctx.stage) == "Y" else [0, 0, 1.0])
+    rig = ctx.body_rigid[path]
+    r = np.array([[rig[i][j] for j in range(3)] for i in range(3)])
+    up = r @ up_w  # world up in the body frame (row-vector matrices)
+    pts = np.vstack([np.asarray(ctx.hull_shapes[c].vertices) for c in colliders])
+    h = pts @ up
+    size = float(np.ptp(pts, axis=0).max())
+    base = pts[h < h.min() + max(0.001, 0.01 * size)]
+    e1 = np.cross(up, [1.0, 0, 0] if abs(up[0]) < 0.9 else [0, 1.0, 0])
+    e1 /= np.linalg.norm(e1)
+    e2 = np.cross(up, e1)
+    flat = np.c_[base @ e1, base @ e2]
+    try:
+        poly = ConvexHull(flat)
+    except Exception:  # noqa: BLE001  (a point or an edge: rolls anyway, nothing to judge)
+        return False
+
+    def inside(p, margin):
+        q = np.array([p @ e1, p @ e2])
+        return bool(np.all(poly.equations[:, :2] @ q + poly.equations[:, 2] <= -margin))
+
+    com_auth = np.asarray(body.inertial.pos)
+    cm, diag, quat = _shape_inertial(ctx, colliders, body.inertial.mass)
+    margin = max(0.002, 0.02 * size)
+    if inside(com_auth, 0.0) or not inside(cm, margin):
+        return False
+    shift = float(np.linalg.norm(cm - com_auth))
+    body.inertial = Inertial(
+        mass=body.inertial.mass,
+        pos=tuple(float(x) for x in cm),
+        diaginertia=diag,
+        quat=quat,
+        source="corrected",
+    )
+    ctx.mass_corrections.append(
+        {
+            "body": body.name,
+            "authored_kg": round(body.inertial.mass, 4),
+            "corrected_kg": round(body.inertial.mass, 4),
+            "com_moved_mm": round(shift * 1000, 1),
+            "reason": "authored centre of mass outside the base",
+        }
+    )
+    ctx.model.warnings.append(
+        f"{body.name}: authored centre of mass lies outside the object's base (it would "
+        f"topple); using the shape's, {shift * 1000:.0f} mm away. Mass kept at "
+        f"{body.inertial.mass:.3f} kg (authored_mass: keep to use the file's values)"
+    )
+    return True
 
 
 def _moves(model: Model, body_name: str) -> bool:

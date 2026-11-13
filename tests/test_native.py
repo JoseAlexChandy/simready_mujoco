@@ -374,7 +374,7 @@ def test_pinholes_sharing_a_vertex_are_filled_separately():
     assert _fill_pinholes(open_top, 0.01) is None
 
 
-def _mug_with_authored_mass(path, com_from: str):
+def _mug_with_authored_mass(path, com_from: str, override=None):
     """Closed mug whose collider carries authored MassAPI values, like SimReady's mugs.
     com_from="hull": the values a tool gets by filling the mug's convex hull (the real
     kitchenware_mug_d01 case). com_from="mesh": genuine values for the real shape."""
@@ -405,8 +405,11 @@ def _mug_with_authored_mass(path, com_from: str):
     UsdPhysics.CollisionAPI.Apply(m.GetPrim())
     UsdPhysics.MeshCollisionAPI.Apply(m.GetPrim()).CreateApproximationAttr("convexHull")
     api = UsdPhysics.MassAPI.Apply(m.GetPrim())
-    api.CreateMassAttr(float(src.mass))
-    api.CreateCenterOfMassAttr(Gf.Vec3f(*map(float, src.center_mass)))
+    mass, com = float(src.mass), src.center_mass
+    if override:
+        mass, com = override
+    api.CreateMassAttr(float(mass))
+    api.CreateCenterOfMassAttr(Gf.Vec3f(*map(float, com)))
     api.CreateDiagonalInertiaAttr(Gf.Vec3f(*map(float, np.linalg.eigvalsh(src.moment_inertia))))
     stage.GetRootLayer().Save()
     return path, mug
@@ -437,3 +440,42 @@ def test_genuine_authored_mass_is_kept(tmp_path):
     report = json.loads((out.parent / "conversion_report.json").read_text())
     assert report["inertial_sources"]["authored"] == 1
     assert report["mass_corrections"] == []
+
+
+def test_authored_com_outside_the_base_is_moved_mass_kept(tmp_path):
+    """SimReady kitchenware_mug_d01: 1.963 kg authored with the centre of mass 37 mm toward
+    the handle, past the edge of its base (real shape: 1 mm). Neither hull nor shape values,
+    so the hull fingerprint can't catch it; it would topple at rest. The base radius here is
+    40 mm; authored centre of mass at y = -60 mm."""
+    path, mug = _mug_with_authored_mass(
+        tmp_path / "mug.usda", com_from="mesh", override=(1.963, (0.0, -0.06, 0.06))
+    )
+    out = convert(path, tmp_path / "o")
+    mj = mujoco.MjModel.from_xml_path(str(out))
+    b = mj.body("mug").id
+    assert mj.body_mass[b] == pytest.approx(1.963, rel=1e-3)
+    assert np.allclose(mj.body_ipos[b], mug.center_mass, atol=1e-3)
+    report = json.loads((out.parent / "conversion_report.json").read_text())
+    assert report["mass_corrections"][0]["reason"].startswith("authored centre of mass outside")
+
+    # it now stays upright on a floor
+    xml = out.read_text().replace(
+        "<worldbody>", '<worldbody><geom type="plane" size="1 1 0.1"/>', 1
+    )
+    (out.parent / "floor.xml").write_text(xml)
+    mf = mujoco.MjModel.from_xml_path(str(out.parent / "floor.xml"))
+    d = mujoco.MjData(mf)
+    for _ in range(int(1.0 / mf.opt.timestep)):
+        mujoco.mj_step(mf, d)
+    up = d.xmat[mf.body("mug").id].reshape(3, 3)[:, 2]
+    assert up[2] > 0.99
+
+
+def test_authored_com_inside_the_base_is_kept(tmp_path):
+    """kitchenware_mug_e01: authored centre of mass 10 mm off the shape's but over the base."""
+    path, _ = _mug_with_authored_mass(
+        tmp_path / "mug.usda", com_from="mesh", override=(1.767, (0.0, -0.02, 0.05))
+    )
+    out = convert(path, tmp_path / "o")
+    mj = mujoco.MjModel.from_xml_path(str(out))
+    assert np.allclose(mj.body_ipos[mj.body("mug").id], (0.0, -0.02, 0.05), atol=1e-4)
