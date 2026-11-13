@@ -85,3 +85,20 @@ bounding-box edge, and `collisionEnabled = false` stops the door colliding with 
 sits in. Spring and damping are written as `mjc:stiffness` / `mjc:damping`. From there the
 normal pipeline handles the joint like any authored joint, so the same spec would also work in
 Isaac Sim if the session layer were exported.
+
+## How parts behave in the scene
+
+`srmj scene` changes how objects' moving parts behave, so they act as they would in your hand.
+This applies to the scene only. The converted assets keep their motors, so Koyo's project can
+still drive them. Robots and grippers are never changed. All of it is set under
+`articulation:` in `configs/scene.yaml`:
+
+| setting | default | effect |
+|---|---|---|
+| `motors` | `passive` | Object motors (laptop lid, microwave door, air-fryer basket) produce no force, so a dragged part stays put. Their damping is kept. `keep` leaves the motors on. |
+| `momentary` | `true` | Buttons, triggers and switches (slides up to 15 mm, hinges up to 10°) spring back when let go. |
+| `momentary_hz` | `4.0` | How quickly they spring back. |
+| `hold_factor` | `1.3` | Friction relative to the part's own gravity torque, so lids and flaps stay at any angle. Vertical door hinges and level drawers get none. `0` turns this off. |
+| `damping`, `frictionloss` | `0.5`, `0.05` | Light damping and friction for every other joint. |
+
+`srmj scene` lists which motors were switched off and which joints became momentary.

@@ -55,11 +55,26 @@ class SheetSpec:
 
 @dataclass
 class ArticulationSpec:
-    """Damping/friction for unactuated hinge and slide joints, so dragged parts stay put."""
+    """How moving parts of objects behave when dragged in the viewer (scene only; the
+    converted asset files keep everything, motors included)."""
 
     damping: float = 0.5  # N·m·s/rad (hinges) or N·s/m (slides)
     frictionloss: float = 0.05
     enabled: bool = True
+    # Objects' motors (UsdPhysics drives) hold a joint at a target, so a dragged laptop lid
+    # springs back. "passive": turn them off (their damping is kept); "keep": leave them.
+    # Robots and grippers always keep theirs.
+    motors: str = "passive"
+    # Short-travel controls (slides up to 15 mm, hinges up to 10 deg: buttons, triggers,
+    # switches) spring back to rest when let go.
+    momentary: bool = True
+    momentary_hz: float = 4.0
+    momentary_max_slide: float = 0.015  # m
+    momentary_max_hinge_deg: float = 10.0
+    # Friction that holds a part against its own weight (a laptop lid at any angle, like real
+    # hinges), as a multiple of the largest gravity torque/force on the joint. Vertical door
+    # hinges and level drawers feel no gravity along their axis and get none.
+    hold_factor: float = 1.3
 
 
 ROBOT_CATEGORIES = ("robot", "gripper")
@@ -88,6 +103,9 @@ class SceneReport:
     sheet: dict | None = None
     skipped_robots: list[str] = field(default_factory=list)
     softened_joints: int = 0
+    passive_motors: list[str] = field(default_factory=list)
+    momentary_joints: list[str] = field(default_factory=list)
+    held_joints: int = 0
 
 
 def _bbox(m: mujoco.MjModel) -> tuple[np.ndarray, np.ndarray]:
@@ -289,7 +307,11 @@ def _soften_articulation(child: mujoco.MjSpec, art: ArticulationSpec) -> int:
     Joints that already have damping, or are driven by an actuator, are left alone."""
     if not art.enabled:
         return 0
-    driven = {a.target for a in child.actuators}
+    driven = {
+        a.target
+        for a in child.actuators
+        if np.any(np.asarray(a.gainprm)) or np.any(np.asarray(a.biasprm))
+    }
     n = 0
     for j in child.joints:
         if j.type not in (mujoco.mjtJoint.mjJNT_HINGE, mujoco.mjtJoint.mjJNT_SLIDE):
@@ -303,6 +325,137 @@ def _soften_articulation(child: mujoco.MjSpec, art: ArticulationSpec) -> int:
         if j.frictionloss == 0:
             j.frictionloss = art.frictionloss
         n += 1
+    return n
+
+
+def _set(obj, name: str, value: float) -> None:
+    """Set a joint scalar that MuJoCo >= 4 stores as an array (damping, stiffness)."""
+    cur = getattr(obj, name)
+    if isinstance(cur, np.ndarray) and cur.ndim:
+        arr = np.zeros_like(cur)
+        arr[0] = value
+        setattr(obj, name, arr)
+    else:
+        setattr(obj, name, value)
+
+
+def _first(v) -> float:
+    a = np.atleast_1d(np.asarray(v, dtype=float))
+    return float(a[0]) if a.size else 0.0
+
+
+def _passive_motors(child: mujoco.MjSpec, art: ArticulationSpec) -> list[str]:
+    """Zero the gains of joint actuators, moving their damping (kv) onto the joint, so the
+    part can be dragged and stays where it is left. The actuator stays in the model (it just
+    produces no force), so the control panel still lists it."""
+    if art.motors != "passive":
+        return []
+    joints = {j.name: j for j in child.joints}
+    out = []
+    for a in child.actuators:
+        if a.trntype != mujoco.mjtTrn.mjTRN_JOINT or a.target not in joints:
+            continue
+        j = joints[a.target]
+        kv = (
+            -_first(np.asarray(a.biasprm)[2:3]) if a.biastype == mujoco.mjtBias.mjBIAS_AFFINE else 0
+        )
+        _set(j, "damping", max(_first(j.damping), kv, 0.0))
+        a.gainprm = np.zeros_like(np.asarray(a.gainprm))
+        a.biasprm = np.zeros_like(np.asarray(a.biasprm))
+        out.append(a.name or a.target)
+    return out
+
+
+def _momentary(child: mujoco.MjSpec, mjcf: str, art: ArticulationSpec) -> list[str]:
+    """Return springs for short-travel, unactuated hinge/slide joints (buttons, triggers,
+    switches): stiffness for a `momentary_hz` natural frequency about their rest pose, damping
+    at 0.8 of critical, no friction (it would hold a light button in place)."""
+    if not art.momentary:
+        return []
+    from simready_mujoco.sim.stability import _full_mass_matrix  # noqa: PLC0415
+
+    m = mujoco.MjModel.from_xml_path(mjcf)
+    d = mujoco.MjData(m)
+    mujoco.mj_forward(m, d)
+    full = np.zeros((m.nv, m.nv))
+    _full_mass_matrix(m, d, full)
+    driven = {
+        a.target
+        for a in child.actuators
+        if np.any(np.asarray(a.gainprm)) or np.any(np.asarray(a.biasprm))
+    }
+    joints = {j.name: j for j in child.joints}
+    out = []
+    w = 2 * np.pi * art.momentary_hz
+    for jid in range(m.njnt):
+        name = m.joint(jid).name
+        jt = int(m.jnt_type[jid])
+        if name not in joints or name in driven or not m.jnt_limited[jid]:
+            continue
+        span = float(np.ptp(m.jnt_range[jid]))
+        if jt == mujoco.mjtJoint.mjJNT_SLIDE:
+            short = span <= art.momentary_max_slide
+        elif jt == mujoco.mjtJoint.mjJNT_HINGE:
+            short = span <= np.radians(art.momentary_max_hinge_deg)
+        else:
+            continue
+        if not short or span <= 0:
+            continue
+        dof = int(m.jnt_dofadr[jid])
+        inertia = float(full[dof, dof]) + float(m.dof_armature[dof])
+        if inertia <= 0:
+            continue
+        j = joints[name]
+        k = inertia * w * w
+        _set(j, "stiffness", k)
+        j.springref = j.ref
+        _set(j, "damping", max(_first(j.damping), 2 * 0.8 * np.sqrt(k * inertia)))
+        j.frictionloss = 0.0
+        out.append(name)
+    return out
+
+
+def _hold_against_gravity(
+    child: mujoco.MjSpec, mjcf: str, art: ArticulationSpec, skip: set[str]
+) -> int:
+    """Friction on unactuated hinge/slide joints large enough to hold the moving part against
+    gravity in any pose: hinges get hold_factor * m |g_perp| |r_perp| (largest gravity torque
+    about the axis), slides hold_factor * m |g . axis|."""
+    if art.hold_factor <= 0:
+        return 0
+    m = mujoco.MjModel.from_xml_path(mjcf)
+    d = mujoco.MjData(m)
+    mujoco.mj_forward(m, d)
+    g = np.asarray(m.opt.gravity, dtype=float)
+    driven = {
+        a.target
+        for a in child.actuators
+        if np.any(np.asarray(a.gainprm)) or np.any(np.asarray(a.biasprm))
+    }
+    joints = {j.name: j for j in child.joints}
+    n = 0
+    for jid in range(m.njnt):
+        name = m.joint(jid).name
+        jt = int(m.jnt_type[jid])
+        if name not in joints or name in driven or name in skip:
+            continue
+        if jt not in (mujoco.mjtJoint.mjJNT_HINGE, mujoco.mjtJoint.mjJNT_SLIDE):
+            continue
+        body = int(m.jnt_bodyid[jid])
+        mass = float(m.body_subtreemass[body])
+        a = np.asarray(d.xaxis[jid], dtype=float)
+        if jt == mujoco.mjtJoint.mjJNT_HINGE:
+            r = np.asarray(d.subtree_com[body]) - np.asarray(d.xanchor[jid])
+            r_perp = r - np.dot(r, a) * a
+            g_perp = g - np.dot(g, a) * a
+            need = mass * np.linalg.norm(g_perp) * np.linalg.norm(r_perp)
+        else:
+            need = mass * abs(float(np.dot(g, a)))
+        need *= art.hold_factor
+        j = joints[name]
+        if need > j.frictionloss:
+            j.frictionloss = float(need)
+            n += 1
     return n
 
 
@@ -363,11 +516,19 @@ def build_scene(
     scene = _shell(profile, table, sheet)
 
     softened = 0
+    passive: list[str] = []
+    momentary: list[str] = []
+    held = 0
     with warnings.catch_warnings(), redirect_output(out_file.parent / "scene_build.log"):
         warnings.simplefilter("ignore")
         for it in placed:
             child = mujoco.MjSpec.from_file(it.mjcf)
             _absolute_meshes(child, Path(it.mjcf))
+            if articulation.enabled and it.category not in ROBOT_CATEGORIES:
+                passive += [f"{it.id}/{n}" for n in _passive_motors(child, articulation)]
+                springs = _momentary(child, it.mjcf, articulation)
+                momentary += [f"{it.id}/{n}" for n in springs]
+                held += _hold_against_gravity(child, it.mjcf, articulation, set(springs))
             softened += _soften_articulation(child, articulation)
             yaw = np.radians(it.yaw_deg)
             frame = scene.worldbody.add_frame(
@@ -381,6 +542,9 @@ def build_scene(
     report.sheet = asdict(sheet) if sheet else None
     report.skipped_robots = skipped_robots
     report.softened_joints = softened
+    report.passive_motors = passive
+    report.momentary_joints = momentary
+    report.held_joints = held
     report.settle = settle_check(model, placed, settle_seconds)
     return report
 

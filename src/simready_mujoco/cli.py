@@ -538,6 +538,22 @@ def scene(
             f"[dim]Robots/grippers left out (set robots: true in the scene config): "
             f"{', '.join(rep.skipped_robots)}[/]"
         )
+    if rep.passive_motors:
+        console.print(
+            f"[dim]{len(rep.passive_motors)} object motors switched off so their parts can be "
+            f"dragged ({', '.join(rep.passive_motors)}); `motors: keep` under articulation: "
+            "in the scene config keeps them[/]"
+        )
+    if rep.momentary_joints:
+        console.print(
+            f"[dim]{len(rep.momentary_joints)} buttons/triggers/switches spring back when let "
+            f"go: {', '.join(rep.momentary_joints)}[/]"
+        )
+    if rep.held_joints:
+        console.print(
+            f"[dim]{rep.held_joints} hinges/slides given enough friction to hold their part "
+            "against its own weight (lids and flaps stay at any angle)[/]"
+        )
     if rep.softened_joints:
         console.print(
             f"[dim]{rep.softened_joints} unactuated joints given light damping so dragged parts "

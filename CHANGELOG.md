@@ -5,6 +5,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [SemVer](ht
 ## [Unreleased]
 
 ### Added
+- Scene: objects' moving parts behave as they would in your hand. Robots and grippers are unchanged, and the asset files keep everything, so motors can still be driven elsewhere.
+  - **Motors off** (`articulation: motors: passive`, default). Drives on objects (laptop lid, microwave door and release button, air-fryer basket and dial) held their joint at a target, so a dragged part sprang back. Their gains are zeroed in the scene and their damping is kept. `motors: keep` restores them.
+  - **Momentary controls** (`momentary: true`). Short-travel joints (slides up to 15 mm, hinges up to 10°: buttons, triggers, the fridge door switch) spring back when let go, at 4 Hz with 0.8 damping, sized from each joint's own inertia.
+  - **Parts hold their own weight.** Hinges and slides get friction of 1.3x the largest gravity torque about their axis, so a lid stays at any angle like a real hinge. Vertical door hinges and level drawers get none.
 - Health checks: every converted asset is stepped on its own for 1 s. Divergence (NaN/Inf) and non-finite or zero mass properties are recorded as warnings naming the body, and `srmj batch` prints them in red. The scene settle check now fails and names the body when the simulation diverges: MuJoCo resets on NaN, which made a broken scene look settled ("-0 mm ✓" for everything).
 - **Articulation for one-piece assets**: an `articulation:` list on an asset in `configs/subset.yaml` turns named parts (doors, lids, baskets, buttons, knobs) into hinges or sliders with limits, optional spring-back and damping. They are authored as UsdPhysics joints on the session layer, and the mass is shared by volume. `srmj parts ID|all|FILE` lists parts with their size and position in the asset frame. See docs/articulation.md.
 - Viewer help now lists the lift (Ctrl + right-drag), slide-along-the-floor (Ctrl + Shift + right-drag) and twist controls.

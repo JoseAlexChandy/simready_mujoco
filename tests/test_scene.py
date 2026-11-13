@@ -82,7 +82,9 @@ def test_robots_left_out_unless_enabled(converted, tmp_path):
 
 def test_unactuated_joints_get_damping_so_dragged_parts_stay(converted, tmp_path):
     items = [Item("cabinet", str(converted["cabinet"]))]
-    build_scene(items, tmp_path / "s.xml", articulation=ArticulationSpec(damping=0.7))
+    build_scene(
+        items, tmp_path / "s.xml", articulation=ArticulationSpec(damping=0.7, motors="keep")
+    )
     m = mujoco.MjModel.from_xml_path(str(tmp_path / "s.xml"))
     slide = m.joint("cabinet/drawer_slide")  # no motor -> softened
     hinge = m.joint("cabinet/door_hinge")  # driven by an actuator -> untouched
@@ -96,3 +98,74 @@ def test_unactuated_joints_get_damping_so_dragged_parts_stay(converted, tmp_path
     for _ in range(int(1.0 / m.opt.timestep)):
         mujoco.mj_step(m, d)
     assert d.qpos[slide.qposadr[0]] == pytest.approx(0.15, abs=0.02)
+
+
+GADGET = """
+<mujoco model="gadget">
+  <compiler angle="radian" autolimits="true"/>
+  <worldbody>
+    <body name="housing" pos="0 0 0.05">
+      <freejoint name="housing_free"/>
+      <geom type="box" size="0.15 0.1 0.05" mass="2"/>
+      <body name="lid" pos="-0.15 0 0.05">
+        <joint name="lid_hinge" type="hinge" axis="0 -1 0" range="0 1.8"/>
+        <geom type="box" size="0.15 0.1 0.005" pos="0.15 0 0.005" mass="0.3"/>
+      </body>
+      <body name="button" pos="0.1 -0.1 0.02">
+        <joint name="button_slide" type="slide" axis="0 1 0" range="0 0.004"/>
+        <geom type="box" size="0.01 0.003 0.005" mass="0.002"/>
+      </body>
+    </body>
+  </worldbody>
+  <actuator>
+    <position name="lid_motor" joint="lid_hinge" kp="20" kv="0.5"/>
+  </actuator>
+</mujoco>
+"""
+
+
+def _drag_and_release(rep, joint, value, seconds=1.0):
+    m = mujoco.MjModel.from_xml_path(rep.scene)
+    d = mujoco.MjData(m)
+    j = m.joint(joint)
+    d.qpos[j.qposadr[0]] = value
+    for _ in range(int(seconds / m.opt.timestep)):
+        mujoco.mj_step(m, d)
+    return float(d.qpos[j.qposadr[0]])
+
+
+@pytest.fixture
+def gadget(tmp_path):
+    f = tmp_path / "gadget" / "gadget.xml"
+    f.parent.mkdir()
+    f.write_text(GADGET)
+    return f
+
+
+def test_object_motor_off_so_lid_stays_where_left(gadget, tmp_path):
+    rep = build_scene([Item("g", str(gadget), category="object")], tmp_path / "s" / "scene.xml")
+    assert rep.passive_motors == ["g/lid_motor"]
+    assert _drag_and_release(rep, "g/lid_hinge", 1.0) == pytest.approx(1.0, abs=0.1)
+
+    kept = build_scene(
+        [Item("g", str(gadget), category="object")],
+        tmp_path / "k" / "scene.xml",
+        articulation=ArticulationSpec(motors="keep"),
+    )
+    assert kept.passive_motors == []
+    assert _drag_and_release(kept, "g/lid_hinge", 1.0) < 0.2  # the motor pulls it shut
+
+
+def test_button_springs_back(gadget, tmp_path):
+    rep = build_scene([Item("g", str(gadget), category="object")], tmp_path / "s" / "scene.xml")
+    assert rep.momentary_joints == ["g/button_slide"]
+    assert _drag_and_release(rep, "g/button_slide", 0.0035) < 0.0005
+
+
+def test_robot_motors_are_kept(gadget, tmp_path):
+    rep = build_scene(
+        [Item("g", str(gadget), category="robot", place=[0, 0, 0])],
+        tmp_path / "s" / "scene.xml",
+        include_robots=True,
+    )
+    assert rep.passive_motors == [] and rep.momentary_joints == []
