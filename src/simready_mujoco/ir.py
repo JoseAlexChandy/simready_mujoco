@@ -47,7 +47,7 @@ class Inertial:
     pos: Vec3 = (0.0, 0.0, 0.0)  # centre of mass in the body frame
     diaginertia: Vec3 = (0.0, 0.0, 0.0)
     quat: Quat = (1.0, 0.0, 0.0, 0.0)  # principal axes in the body frame
-    source: str = "computed"  # "authored" | "computed" | "default"
+    source: str = "computed"  # "authored" | "corrected" | "computed" | "default"
 
 
 @dataclass

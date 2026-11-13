@@ -372,3 +372,68 @@ def test_pinholes_sharing_a_vertex_are_filled_separately():
     assert filled.volume == pytest.approx(cyl.volume, rel=1e-6)
     open_top = trimesh.Trimesh(cyl.vertices, np.delete(cyl.faces, cap, axis=0), process=False)
     assert _fill_pinholes(open_top, 0.01) is None
+
+
+def _mug_with_authored_mass(path, com_from: str):
+    """Closed mug whose collider carries authored MassAPI values, like SimReady's mugs.
+    com_from="hull": the values a tool gets by filling the mug's convex hull (the real
+    kitchenware_mug_d01 case). com_from="mesh": genuine values for the real shape."""
+    import trimesh
+    from pxr import Gf, Usd, UsdGeom, UsdPhysics
+
+    T = trimesh.transformations.translation_matrix
+    mug = trimesh.util.concatenate(
+        [
+            trimesh.creation.annulus(r_min=0.035, r_max=0.04, height=0.1),
+            trimesh.creation.cylinder(radius=0.0349, height=0.006, transform=T((0, 0, -0.047))),
+            trimesh.creation.box((0.01, 0.044, 0.06), T((0, -0.063, 0))),
+        ]
+    )
+    mug.apply_translation((0, 0, 0.05))
+    src = mug.convex_hull if com_from == "hull" else mug
+    src.density = 1000.0
+    stage = Usd.Stage.CreateNew(str(path))
+    UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+    root = UsdGeom.Xform.Define(stage, "/mug").GetPrim()
+    stage.SetDefaultPrim(root)
+    UsdPhysics.RigidBodyAPI.Apply(root)
+    m = UsdGeom.Mesh.Define(stage, "/mug/mesh")
+    m.CreatePointsAttr([Gf.Vec3f(*map(float, v)) for v in mug.vertices])
+    m.CreateFaceVertexCountsAttr([3] * len(mug.faces))
+    m.CreateFaceVertexIndicesAttr([int(i) for f in mug.faces for i in f])
+    UsdPhysics.CollisionAPI.Apply(m.GetPrim())
+    UsdPhysics.MeshCollisionAPI.Apply(m.GetPrim()).CreateApproximationAttr("convexHull")
+    api = UsdPhysics.MassAPI.Apply(m.GetPrim())
+    api.CreateMassAttr(float(src.mass))
+    api.CreateCenterOfMassAttr(Gf.Vec3f(*map(float, src.center_mass)))
+    api.CreateDiagonalInertiaAttr(Gf.Vec3f(*map(float, np.linalg.eigvalsh(src.moment_inertia))))
+    stage.GetRootLayer().Save()
+    return path, mug
+
+
+def test_hull_derived_authored_mass_is_corrected(tmp_path):
+    path, mug = _mug_with_authored_mass(tmp_path / "mug.usda", com_from="hull")
+    out = convert(path, tmp_path / "o")
+    mj = mujoco.MjModel.from_xml_path(str(out))
+    b = mj.body("mug").id
+    assert mj.body_mass[b] == pytest.approx(mug.volume * 1000.0, rel=0.02)
+    assert np.allclose(mj.body_ipos[b], mug.center_mass, atol=1e-3)
+    report = json.loads((out.parent / "conversion_report.json").read_text())
+    assert report["inertial_sources"]["corrected"] == 1
+    (fix,) = report["mass_corrections"]
+    assert fix["authored_kg"] > 3 * fix["corrected_kg"]
+
+    kept = convert(path, tmp_path / "keep", authored_mass="keep")
+    mk = mujoco.MjModel.from_xml_path(str(kept))
+    assert mk.body_mass[mk.body("mug").id] == pytest.approx(mug.convex_hull.volume * 1000, rel=0.01)
+
+
+def test_genuine_authored_mass_is_kept(tmp_path):
+    path, mug = _mug_with_authored_mass(tmp_path / "mug.usda", com_from="mesh")
+    out = convert(path, tmp_path / "o")
+    mj = mujoco.MjModel.from_xml_path(str(out))
+    assert mj.body_mass[mj.body("mug").id] == pytest.approx(mug.volume * 1000.0, rel=0.01)
+    report = json.loads((out.parent / "conversion_report.json").read_text())
+    assert report["inertial_sources"]["authored"] == 1
+    assert report["mass_corrections"] == []

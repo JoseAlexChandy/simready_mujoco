@@ -28,6 +28,7 @@ def convert(
     actuators: str = "auto",
     decompose: str = "auto",
     articulation: list[dict] | None = None,
+    authored_mass: str = "auto",
 ) -> Path:
     """Convert one USD asset to MJCF and return the MJCF file path.
 
@@ -46,6 +47,9 @@ def convert(
         decompose: native backend: "auto" splits concave collision meshes into convex parts
             (CoACD) only when their hull overlaps another part at the authored pose (hollow
             carcasses with things inside); "concave", "all" or "off"
+        authored_mass: native backend: "auto" replaces authored mass properties that were
+            evidently computed from convex hulls (centre of mass on the hull centroid, far
+            from the real shape's); "keep" uses the file's values as they are
         articulation: native backend: joints to add for moving parts the asset models as
             plain meshes (see usd.articulate.PartJoint and docs/articulation.md)
     """
@@ -63,9 +67,15 @@ def convert(
 
             added = apply_articulation(stage, articulation)
         if decompose == "auto":
-            model = _auto_decompose(stage, usd_file.stem, actuators, out_dir)
+            model = _auto_decompose(stage, usd_file.stem, actuators, out_dir, authored_mass)
         else:
-            model = parse_stage(stage, name=usd_file.stem, actuators=actuators, decompose=decompose)
+            model = parse_stage(
+                stage,
+                name=usd_file.stem,
+                actuators=actuators,
+                decompose=decompose,
+                authored_mass=authored_mass,
+            )
         if added:
             model.notes["added_joints"] = added
         if generate_collision:
@@ -129,7 +139,7 @@ def _write_report(model, out_dir: Path) -> None:
     (out_dir / "conversion_report.json").write_text(json.dumps(report, indent=2, default=str))
 
 
-def _auto_decompose(stage, name: str, actuators: str, out_dir: Path):
+def _auto_decompose(stage, name: str, actuators: str, out_dir: Path, authored_mass: str = "auto"):
     """Convert, then split concave colliders that overlap other parts at the authored pose.
     Meshes still overlapping after a round are redone at a finer level (decompose.LEVELS).
 
@@ -145,7 +155,7 @@ def _auto_decompose(stage, name: str, actuators: str, out_dir: Path):
         with tempfile.TemporaryDirectory(prefix="srmj_check_") as tmp:
             return _overlapping_meshes(write_mjcf(model, tmp), model)
 
-    model = parse_stage(stage, name=name, actuators=actuators)
+    model = parse_stage(stage, name=name, actuators=actuators, authored_mass=authored_mass)
     overlapping = check(model)
     if not overlapping:
         return model
@@ -155,7 +165,12 @@ def _auto_decompose(stage, name: str, actuators: str, out_dir: Path):
         for mesh in overlapping:
             levels[mesh] = level if mesh not in levels else max(levels[mesh], level)
         model = parse_stage(
-            stage, name=name, actuators=actuators, decompose="concave", decompose_only=dict(levels)
+            stage,
+            name=name,
+            actuators=actuators,
+            decompose="concave",
+            decompose_only=dict(levels),
+            authored_mass=authored_mass,
         )
         still = check(model)
         rounds.append({"level": level, **LEVELS[level], "still_overlapping": sorted(still)})

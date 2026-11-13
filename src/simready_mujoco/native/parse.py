@@ -249,6 +249,10 @@ class _Ctx:
     joint_range: dict[str, tuple[float, float] | None] = field(default_factory=dict)
     joint_ref: dict[str, float] = field(default_factory=dict)
     mass_shapes: dict[str, trimesh.Trimesh] = field(default_factory=dict)  # collider -> body frame
+    hull_shapes: dict[str, trimesh.Trimesh] = field(default_factory=dict)  # collider -> body frame
+    collider_owner: dict[str, str] = field(default_factory=dict)  # collider path -> body path
+    authored_mass: str = "auto"  # "auto": correct hull-derived authored mass; "keep"
+    mass_corrections: list[dict] = field(default_factory=list)
     mesh_keys: dict[tuple, str] = field(default_factory=dict)
     decompose: str = "off"
     decompose_only: dict[str, int] | None = None  # mesh -> refinement level (None = all, level 0)
@@ -268,6 +272,7 @@ def parse_stage(
     actuators: str = "auto",
     decompose: str = "off",
     decompose_only: dict[str, int] | None = None,
+    authored_mass: str = "auto",
 ) -> Model:
     """decompose: "concave" splits concave collision meshes into convex parts (CoACD), "all"
     splits every collision mesh, "off" keeps one convex hull per mesh. decompose_only limits
@@ -281,7 +286,10 @@ def parse_stage(
         xcache=UsdGeom.XformCache(),
         decompose=decompose,
         decompose_only=decompose_only,
+        authored_mass=authored_mass,
     )
+    if authored_mass not in ("auto", "keep"):
+        raise ValueError("authored_mass must be auto | keep")
     ctx.model = Model(name=name)
     parsed = parse_physics(stage)
 
@@ -315,8 +323,9 @@ def parse_stage(
         },
         inertial_sources={
             s: sum(b.inertial is not None and b.inertial.source == s for b in m.bodies)
-            for s in ("authored", "computed", "default")
+            for s in ("authored", "corrected", "computed", "default")
         },
+        mass_corrections=ctx.mass_corrections,
     )
     return m
 
@@ -681,6 +690,16 @@ def _mass_shape(vertices, faces) -> trimesh.Trimesh | None:
         return None
 
 
+def _hull_of(tm: trimesh.Trimesh | None) -> trimesh.Trimesh | None:
+    """Convex hull of a collider in the body frame (what MuJoCo collides with)."""
+    if tm is None:
+        return None
+    try:
+        return tm if tm.metadata.get("mass_source") is None and tm.is_convex else tm.convex_hull
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _fill_pinholes(tm: trimesh.Trimesh, max_area_fraction: float) -> trimesh.Trimesh | None:
     """Close every boundary loop with a triangle fan, if together they add at most
     `max_area_fraction` of the surface area. Returns the closed mesh, or None when the holes
@@ -779,6 +798,7 @@ def _collect_colliders(ctx: _Ctx, parsed, bodies: list[str]) -> dict[str, str]:
             if built is None:
                 continue
             g, tm = built
+            built_hull = _hull_of(tm)
             g.rgba = COLLISION_RGBA
             g.extra.update(_passthrough(prim, MJC_COLLISION_ATTRS, {}))
             if g.shape == ShapeType.MESH:
@@ -799,6 +819,10 @@ def _collect_colliders(ctx: _Ctx, parsed, bodies: list[str]) -> dict[str, str]:
                             tm.metadata["mass_source"] = "hull"
             if tm is not None and (tm.metadata.get("mass_source") == "shell" or tm.volume > 1e-12):
                 ctx.mass_shapes[path] = tm
+            hull = built_hull
+            if hull is not None and hull.volume > 1e-12:
+                ctx.hull_shapes[path] = hull
+            ctx.collider_owner[path] = owner
             for geom in geoms:
                 _attach(ctx, owner, geom)
             owners[path] = owner
@@ -1088,9 +1112,10 @@ def _compute_inertials(ctx: _Ctx, bodies: list[str]) -> None:
     for b in bodies:
         prim = ctx.stage.GetPrimAtPath(b)
         body = ctx.model.body(ctx.body_name[b])
-        authored = prim.HasAPI(UsdPhysics.MassAPI) and (
-            _authored(prim, "physics:mass") is not None
-            and _authored(prim, "physics:diagonalInertia") is not None
+        colliders = [c for c, o in ctx.collider_owner.items() if o == b]
+        authored = any(
+            _authored(ctx.stage.GetPrimAtPath(p), "physics:mass") is not None
+            for p in [b, *colliders]
         )
         try:
             mass, diag, com, axes = UsdPhysics.RigidBodyAPI(prim).ComputeMassProperties(mass_info)
@@ -1121,6 +1146,83 @@ def _compute_inertials(ctx: _Ctx, bodies: list[str]) -> None:
             quat=q,
             source="authored" if authored else "computed",
         )
+        if authored and ctx.authored_mass == "auto":
+            _correct_hull_derived_mass(ctx, body, colliders)
+
+
+def _shape_props(tm: trimesh.Trimesh) -> tuple[float, np.ndarray, np.ndarray]:
+    """(volume, centre of mass, inertia about it at unit density), body frame, metres."""
+    if tm.metadata.get("mass_source") == "shell":
+        return _shell_mass_properties(tm)
+    tm.density = 1.0
+    return float(tm.volume), np.asarray(tm.center_mass), np.asarray(tm.moment_inertia)
+
+
+def _correct_hull_derived_mass(ctx: _Ctx, body: Body, colliders: list[str]) -> None:
+    """Replace authored mass properties that were evidently computed from convex hulls.
+
+    Fingerprint: the authored centre of mass coincides with the hulls' centroid, while the
+    actual shape's centroid is clearly elsewhere. That is what an authoring tool produces when
+    it fills hollow or hooked shapes (SimReady kitchenware_mug_d01: 1.96 kg, centre of mass
+    37 mm toward the handle, outside its base). Mass is rescaled by real volume / hull volume
+    (same density), and the centre of mass and inertia come from the real shape."""
+    if not colliders or any(
+        c not in ctx.hull_shapes or c not in ctx.mass_shapes for c in colliders
+    ):
+        return
+    hulls = [ctx.hull_shapes[c] for c in colliders]
+    vh = sum(float(h.volume) for h in hulls)
+    if vh <= 0:
+        return
+    ch = sum(float(h.volume) * np.asarray(h.center_mass) for h in hulls) / vh
+    props = [_shape_props(ctx.mass_shapes[c]) for c in colliders]
+    vm = sum(p[0] for p in props)
+    if vm <= 0:
+        return
+    cm = sum(p[0] * p[1] for p in props) / vm
+    size = float(max(np.ptp(np.vstack([h.vertices for h in hulls]), axis=0)))
+    com_auth = np.asarray(body.inertial.pos)
+    on_hull = np.linalg.norm(com_auth - ch) < max(0.002, 0.02 * size)
+    shape_differs = np.linalg.norm(ch - cm) > max(0.005, 0.05 * size)
+    if not (on_hull and shape_differs and vm < 0.9 * vh):
+        return
+    old_mass = body.inertial.mass
+    mass = old_mass * vm / vh
+    rho = mass / vm
+    inertia = np.zeros((3, 3))
+    for v, c, i in props:
+        d = np.asarray(c) - cm
+        inertia += rho * (np.asarray(i) + v * (np.dot(d, d) * np.eye(3) - np.outer(d, d)))
+    evals, evecs = np.linalg.eigh(inertia)
+    if np.linalg.det(evecs) < 0:
+        evecs[:, 0] = -evecs[:, 0]
+    quat = tuple(
+        float(x)
+        for x in trimesh.transformations.quaternion_from_matrix(
+            np.block([[evecs, np.zeros((3, 1))], [np.zeros((1, 3)), np.ones((1, 1))]])
+        )
+    )
+    body.inertial = Inertial(
+        mass=float(mass),
+        pos=tuple(float(x) for x in cm),
+        diaginertia=tuple(float(max(e, MIN_INERTIA)) for e in evals),
+        quat=quat,
+        source="corrected",
+    )
+    shift = float(np.linalg.norm(cm - com_auth))
+    ctx.mass_corrections.append(
+        {
+            "body": body.name,
+            "authored_kg": round(old_mass, 4),
+            "corrected_kg": round(float(mass), 4),
+            "com_moved_mm": round(shift * 1000, 1),
+        }
+    )
+    ctx.model.warnings.append(
+        f"{body.name}: authored mass looks computed from convex hulls; corrected "
+        f"{old_mass:.3f} -> {mass:.3f} kg, centre of mass moved {shift * 1000:.0f} mm "
+        "(authored_mass: keep to use the file's values)"
+    )
 
 
 def _moves(model: Model, body_name: str) -> bool:

@@ -285,6 +285,7 @@ def batch(
                 actuators=entry.get("actuators", cfg.get("actuators", "auto")),
                 decompose=entry.get("decompose", cfg.get("decompose", "auto")),
                 articulation=entry.get("articulation"),
+                authored_mass=entry.get("authored_mass", cfg.get("authored_mass", "auto")),
             )
             row["stage"] = "load"
             row.update(summarize_mjcf(mjcf).to_dict(), ok=True, stage="done")

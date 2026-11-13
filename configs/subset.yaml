@@ -11,6 +11,7 @@
 #   exercises:  mappings this asset is meant to test
 #   simready:   package URL from the index   (or `path:` for a local USD file)
 #   interface:  optional, root USD relative to the asset folder if auto-detection is ambiguous
+#   authored_mass: optional, auto (default: fix hull-derived authored mass) | keep
 #   articulation: optional, hinges/sliders for parts the asset models as plain meshes
 #               (doors, lids, buttons). `srmj parts ID` lists the parts; docs/articulation.md
 #
