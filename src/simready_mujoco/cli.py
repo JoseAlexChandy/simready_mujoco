@@ -563,7 +563,9 @@ def scene(
         "(textures: max_size in the scene config)[/]"
     )
     if rep.nested:
-        console.print(f"[dim]{len(rep.nested)} items placed on/in other objects[/]")
+        console.print(f"[dim]{len(rep.nested)} items placed on/in other objects:[/]")
+        for n in rep.nested:
+            console.print(f"[dim]  {n['id']} → {n['target']}: {n['note']}[/]")
     for msg in rep.nesting_problems:
         console.print(f"[yellow]! {msg}[/]")
     if rep.passive_motors:

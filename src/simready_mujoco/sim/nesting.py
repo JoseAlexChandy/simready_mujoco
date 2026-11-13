@@ -8,9 +8,10 @@ In configs/scene.yaml, under `place:`:
     d00323: {on: d00326, level: 2}       # basket on the shelf's second surface from the top
     d00080: {on: d00264, at: [0.3, 0]}   # loaf on the cutting board, right of centre
 
-`on` and `in` mean the same thing: the item rests on the first surface found by looking
-straight down into the target's collision shape (the inside floor of a bowl or basket, the
-top of a board, a shelf tier). `level: n` takes the n-th surface from the top.
+Surfaces come from where a vertical line through the spot is inside the target's collision
+shape: the top of each solid span is a surface. `on` takes the n-th from the top
+(`level: n`, default 1): a board, a stove, a shelf tier. `in` takes the lowest, the
+container's floor, so a basket's handle or a caddy's dividers don't count.
 `at: [x, y]` is a spot across the target's footprint (-1..1 each way, 0 = centre). Without
 it, items sharing a target are spread over a grid. `upright: true` stands an item on end,
 long axis vertical, heavier end down. `yaw` turns it (degrees).
@@ -30,10 +31,8 @@ from dataclasses import dataclass, field
 import mujoco
 import numpy as np
 
-COLLISION_GROUP = 3  # converted assets put colliders in geom group 3
 CLEARANCE = 0.004  # drop from just above the surface
 SPREAD = 0.55  # items spread over this fraction of the target's footprint
-LEVEL_STEP = 0.02  # after a surface, look again from this far below it
 
 
 @dataclass
@@ -43,6 +42,9 @@ class NestSpec:
     at: tuple[float, float] | None = None
     upright: bool = False
     yaw: float = 0.0
+    inside: bool = (
+        False  # `in:` -> the container's floor (lowest surface); `on:` -> counts from the top
+    )
 
     @classmethod
     def parse(cls, value) -> NestSpec | None:
@@ -53,6 +55,7 @@ class NestSpec:
         keys = set(value) - {"on", "in", "level", "at", "upright", "yaw"}
         if keys:
             raise ValueError(f"place: unknown keys {sorted(keys)} in {value}")
+        inside = "in" in value and "on" not in value
         target = value.get("on", value.get("in"))
         if not target:
             raise ValueError(f"place: {value} needs `on:` or `in:` naming another asset")
@@ -63,6 +66,7 @@ class NestSpec:
             at=(float(at[0]), float(at[1])) if at is not None else None,
             upright=bool(value.get("upright", False)),
             yaw=float(value.get("yaw", 0.0)),
+            inside=inside and "level" not in value,
         )
 
 
@@ -109,26 +113,48 @@ def load_shape(mjcf: str) -> Shape:
     return Shape(m, d, points, np.asarray(com, float))
 
 
-def surfaces(shape: Shape, xy: np.ndarray, levels: int) -> list[float]:
-    """Heights of the first `levels` upward-facing surfaces below (x, y), top first."""
+def _geom_ray(m, d, g: int, start: np.ndarray, vec: np.ndarray) -> float:
+    """Distance along `vec` from `start` to collision geom g, or -1."""
+    if int(m.geom_type[g]) == int(mujoco.mjtGeom.mjGEOM_MESH):
+        return float(mujoco.mj_rayMesh(m, d, g, start, vec))
+    return float(
+        mujoco.mju_rayGeom(
+            d.geom_xpos[g], d.geom_xmat[g], m.geom_size[g], start, vec, int(m.geom_type[g])
+        )
+    )
+
+
+def solid_spans(shape: Shape, xy: np.ndarray) -> list[tuple[float, float]]:
+    """Where the vertical line through (x, y) is inside the collision geometry: merged
+    (bottom, top) spans, highest first. Each collider is convex, so the line enters it once
+    from above and once from below; that gives its span exactly, however thick it is."""
     m, d = shape.model, shape.data
-    group = np.zeros(6, np.uint8)
-    group[COLLISION_GROUP] = 1
-    if not any(m.geom_group[g] == COLLISION_GROUP for g in range(m.ngeom)):
-        group[:] = 1
-    down = np.array([0.0, 0.0, -1.0])
-    z = shape.hi[2] + 0.05
-    out: list[float] = []
-    gid = np.zeros(1, np.int32)
-    while len(out) < levels and z > shape.lo[2] - 0.01:
-        start = np.array([xy[0], xy[1], z])
-        dist = mujoco.mj_ray(m, d, start, down, group, 1, -1, gid)
-        if dist < 0:
-            break
-        hit = z - dist
-        out.append(hit)
-        z = hit - LEVEL_STEP
-    return out
+    geoms = [g for g in range(m.ngeom) if m.geom_contype[g] or m.geom_conaffinity[g]]
+    geoms = geoms or list(range(m.ngeom))
+    top, bottom = shape.hi[2] + 0.05, shape.lo[2] - 0.05
+    down, up = np.array([0.0, 0.0, -1.0]), np.array([0.0, 0.0, 1.0])
+    spans = []
+    for g in geoms:
+        if int(m.geom_type[g]) == int(mujoco.mjtGeom.mjGEOM_PLANE):
+            continue
+        a = _geom_ray(m, d, g, np.array([xy[0], xy[1], top]), down)
+        b = _geom_ray(m, d, g, np.array([xy[0], xy[1], bottom]), up)
+        if a >= 0 and b >= 0:
+            spans.append((bottom + b, top - a))
+    spans.sort(key=lambda s: -s[1])
+    merged: list[list[float]] = []
+    for lo, hi in spans:
+        if merged and hi >= merged[-1][0] - 0.001:  # touches/overlaps the span above
+            merged[-1][0] = min(merged[-1][0], lo)
+        else:
+            merged.append([lo, hi])
+    return [(lo, hi) for lo, hi in merged]
+
+
+def surfaces(shape: Shape, xy: np.ndarray) -> list[float]:
+    """Heights of the upward-facing surfaces on the vertical line through (x, y), top first
+    (the top of each solid span: a shelf board, a basket's handle, a bowl's floor)."""
+    return [hi for _, hi in solid_spans(shape, xy)]
 
 
 def rotation(shape: Shape, spec: NestSpec) -> np.ndarray:
@@ -186,12 +212,16 @@ def place_on(
     centre = (target.lo + target.hi) / 2
     half = (target.hi - target.lo) / 2 * SPREAD
     xy = centre[:2] + np.array(at) * half[:2]
-    found = surfaces(target, xy, spec.level)
-    if len(found) >= spec.level:
-        z_local, note = found[spec.level - 1], f"surface {spec.level}"
+    found = surfaces(target, xy)
+    heights = "/".join(f"{z:.2f}" for z in found)
+    if not found:
+        z_local, note = target.hi[2], "no surface found; on top"
+    elif spec.inside:
+        z_local, note = found[-1], f"floor ({heights} m)"
+    elif len(found) >= spec.level:
+        z_local, note = found[spec.level - 1], f"surface {spec.level} ({heights} m)"
     else:
-        z_local = target.hi[2]
-        note = f"only {len(found)} surface(s) found; on top"
+        z_local, note = found[-1], f"only {len(found)} surface(s) ({heights} m); lowest"
     spot = np.asarray(target_pos) + quat_matrix(target_quat) @ np.array([xy[0], xy[1], z_local])
     q_rel = rotation(item, spec)
     q = np.zeros(4)

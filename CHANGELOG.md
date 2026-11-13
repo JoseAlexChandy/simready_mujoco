@@ -37,6 +37,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [SemVer](ht
 - ADR 0003 (native backend semantics); docs/validation.md.
 
 ### Fixed (found on real SimReady assets)
+- On/in placement in Koyo's kitchen: the round basket and its fruit were thrown up from the display shelf. Surfaces were found by casting down and restarting 2 cm below each hit, which on boards thicker than that found the underside of the top tier. Surfaces now come from exact solid spans (each convex collider is entered once from above and once from below; overlapping spans are merged), so board thickness doesn't matter. `in:` now means the container's floor (the lowest surface), so the ginger goes under the basket's handle instead of onto it, while `on:` still counts tiers from the top. `srmj scene` lists every placement with the surface heights found.
 - `make scene` was killed for running out of memory with 60 assets:
   - **Compiled once.** The scene was compiled twice (`compile()`, then `to_xml()`), so two full copies of every mesh and texture were held at once. It is now compiled once, written, released, and loaded once for the settle check.
   - **Scene textures capped** at 1024 px (`textures: max_size`), from cached scaled-down copies, a quarter of the memory of 2048 px. `textures: enabled: false` gives plain colours. The converted assets keep their full-size textures.

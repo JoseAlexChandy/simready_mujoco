@@ -726,7 +726,7 @@ def _place_nested(nested: list[Item], placed: list[Item]) -> tuple[list[dict], l
             placed.append(it)
             by_id[it.id] = it
             report.append({"id": it.id, "target": sp.target, "level": sp.level, "note": note})
-            if not note.startswith("surface"):
+            if not note.startswith(("surface", "floor")):
                 problems.append(f"{it.id} on {sp.target}: {note}")
             pending.remove(it)
             progress = True

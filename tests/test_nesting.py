@@ -41,10 +41,38 @@ KNIFE = f"""<mujoco model="knife"><worldbody><body name="knife" pos="0 0 0.01">
 </body></worldbody></mujoco>"""
 
 
+# like the real display shelf: boards thicker than any fixed step (6 cm)
+THICK_SHELF = f"""<mujoco model="tshelf"><worldbody><body name="tshelf" pos="0 0 0">
+  <freejoint/>
+  <geom type="box" size="0.3 0.2 0.03" pos="0 0 0.60" {COL} mass="3"/>
+  <geom type="box" size="0.3 0.2 0.03" pos="0 0 0.30" {COL} mass="3"/>
+  <geom type="box" size="0.3 0.2 0.03" pos="0 0 0.03" {COL} mass="3"/>
+  <geom type="box" size="0.02 0.02 0.33" pos="0.28 0.18 0.33" {COL} mass="1"/>
+  <geom type="box" size="0.02 0.02 0.33" pos="-0.28 -0.18 0.33" {COL} mass="1"/>
+</body></worldbody></mujoco>"""
+
+# bowl with a handle arching over its centre (like the wicker basket d00395)
+BASKET = (
+    BOWL.replace('model="bowl"', 'model="basket"')
+    .replace('name="bowl"', 'name="basket"')
+    .replace(
+        "</body>",
+        f'<geom type="box" size="0.08 0.005 0.005" pos="0 0 0.15" {COL} mass="0.02"/></body>',
+    )
+)
+
+
 @pytest.fixture
 def assets(tmp_path):
     out = {}
-    for name, xml in (("bowl", BOWL), ("shelf", SHELF), ("apple", APPLE), ("knife", KNIFE)):
+    for name, xml in (
+        ("bowl", BOWL),
+        ("shelf", SHELF),
+        ("apple", APPLE),
+        ("knife", KNIFE),
+        ("tshelf", THICK_SHELF),
+        ("basket", BASKET),
+    ):
         f = tmp_path / name / f"{name}.xml"
         f.parent.mkdir()
         f.write_text(xml)
@@ -85,7 +113,8 @@ def test_yaml_on_key_is_not_a_boolean(assets, tmp_path):
 def test_apple_lands_inside_the_bowl(assets, tmp_path):
     items = [Item("bowl", assets["bowl"]), Item("apple", assets["apple"], place={"in": "bowl"})]
     rep = build_scene(items, tmp_path / "s" / "scene.xml")
-    assert rep.nested == [{"id": "apple", "target": "bowl", "level": 1, "note": "surface 1"}]
+    (n,) = rep.nested
+    assert n["target"] == "bowl" and n["note"].startswith("floor")
     assert all(s["ok"] for s in rep.settle)
     m, d = _settled(rep)
     apple, bowl = d.xpos[m.body("apple/apple").id], d.xpos[m.body("bowl/bowl").id]
@@ -135,3 +164,34 @@ def test_missing_target_is_reported(assets, tmp_path):
     items = [Item("apple", assets["apple"], place={"in": "nowhere"})]
     rep = build_scene(items, tmp_path / "s" / "scene.xml")
     assert rep.nesting_problems and "nowhere" in rep.nesting_problems[0]
+
+
+def test_levels_on_thick_boards(assets, tmp_path):
+    """The middle tier, not the underside of the top board."""
+    items = [
+        Item("tshelf", assets["tshelf"]),
+        Item("bowl", assets["bowl"], place={"on": "tshelf", "level": 2}),
+    ]
+    rep = build_scene(items, tmp_path / "s" / "scene.xml")
+    assert rep.nested[0]["note"].startswith("surface 2 (0.63/0.33/0.06")
+    assert all(s["ok"] for s in rep.settle)
+    m, d = _settled(rep)
+    z = d.xpos[m.body("bowl/bowl").id][2] - d.xpos[m.body("tshelf/tshelf").id][2]
+    assert z == pytest.approx(0.33, abs=0.01)
+
+
+def test_in_goes_under_a_handle_to_the_floor(assets, tmp_path):
+    items = [
+        Item("basket", assets["basket"]),
+        Item("apple", assets["apple"], place={"in": "basket"}),
+    ]
+    rep = build_scene(items, tmp_path / "s" / "scene.xml")
+    assert rep.nested[0]["note"].startswith("floor")
+    m, d = _settled(rep)
+    apple_z = d.xpos[m.body("apple/apple").id][2] - d.xpos[m.body("basket/basket").id][2]
+    assert apple_z == pytest.approx(0.01 + 0.03, abs=0.005)  # on the floor, under the handle
+    on_top = build_scene(
+        [Item("basket", assets["basket"]), Item("apple", assets["apple"], place={"on": "basket"})],
+        tmp_path / "t" / "scene.xml",
+    )
+    assert on_top.nested[0]["note"].startswith("surface 1 (0.15")  # `on` = the handle's top
