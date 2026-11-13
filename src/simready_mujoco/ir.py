@@ -59,6 +59,7 @@ class MeshData:
     faces: Any  # (M, 3) int array
     inertia: str | None = None  # MuJoCo mesh inertia mode ("shell", "convex", ...)
     maxhullvert: int | None = None
+    source: str | None = None  # for convex parts: the mesh they were decomposed from
 
 
 @dataclass

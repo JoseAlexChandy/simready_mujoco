@@ -64,11 +64,23 @@ def is_concave(vertices: np.ndarray, faces: np.ndarray) -> bool:
     return concavity(vertices, faces) > CONCAVE_SHARE
 
 
-def decompose(vertices: np.ndarray, faces: np.ndarray) -> list[tuple[np.ndarray, np.ndarray]]:
-    """Convex parts of a mesh (CoACD), cached on disk by mesh content and parameters."""
+# Refinement levels for "auto": a mesh still overlapping after a round is redone at the next.
+LEVELS = (
+    {"threshold": 0.08, "max_convex_hull": 32},
+    {"threshold": 0.04, "max_convex_hull": 64},
+    {"threshold": 0.02, "max_convex_hull": 128},
+)
+
+
+def decompose(
+    vertices: np.ndarray, faces: np.ndarray, level: int = 0
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Convex parts of a mesh (CoACD) at a refinement level, cached on disk by mesh content
+    and parameters."""
+    params = {**COACD_PARAMS, **LEVELS[min(level, len(LEVELS) - 1)]}
     v = np.ascontiguousarray(vertices, dtype=np.float64)
     f = np.ascontiguousarray(faces, dtype=np.int32)
-    key = hashlib.sha1(v.tobytes() + f.tobytes() + repr(sorted(COACD_PARAMS.items())).encode())
+    key = hashlib.sha1(v.tobytes() + f.tobytes() + repr(sorted(params.items())).encode())
     cached = cache_dir() / f"{key.hexdigest()}.npz"
     if cached.exists():
         data = np.load(cached)
@@ -78,7 +90,7 @@ def decompose(vertices: np.ndarray, faces: np.ndarray) -> list[tuple[np.ndarray,
     import coacd  # noqa: PLC0415  (optional dependency)
 
     coacd.set_log_level("error")
-    parts = coacd.run_coacd(coacd.Mesh(v, f), **COACD_PARAMS)
+    parts = coacd.run_coacd(coacd.Mesh(v, f), **params)
     out = [(np.asarray(pv, dtype=np.float64), np.asarray(pf, dtype=np.int64)) for pv, pf in parts]
     out = [(pv, pf) for pv, pf in out if len(pv) >= 4 and len(pf) >= 4]
     np.savez_compressed(

@@ -62,3 +62,26 @@ def test_decomposition_is_cached(tmp_path, monkeypatch):
     # second conversion reuses the cache (no new entries)
     convert(build_hollow_cabinet(tmp_path / "b.usda"), tmp_path / "o2", decompose="concave")
     assert len(list((tmp_path / "cache" / "coacd").glob("*.npz"))) == len(cached)
+
+
+def test_auto_refines_when_first_decomposition_is_too_coarse(tmp_path, monkeypatch):
+    """Real case: SimReady fridge pieces at level 0 still bulged 24-35 mm into the lockers."""
+    pytest.importorskip("coacd")
+    import simready_mujoco.native.decompose as dec
+
+    real = dec.decompose
+
+    def coarse_then_real(vertices, faces, level=0):
+        if level == 0:  # simulate a decomposition that is too coarse: one solid hull
+            hull = trimesh.Trimesh(vertices, faces, process=False).convex_hull
+            return [(hull.vertices, hull.faces)]
+        return real(vertices, faces, level)
+
+    monkeypatch.setattr(dec, "decompose", coarse_then_real)
+    out = convert(build_hollow_cabinet(tmp_path / "h.usda"), tmp_path / "o", decompose="auto")
+    report = json.loads((out.parent / "conversion_report.json").read_text())
+    rounds = report["decomposition_rounds"]
+    assert "carcass_col" in rounds[0]["still_overlapping"]
+    assert len(rounds) >= 2 and rounds[-1]["still_overlapping"] == []
+    assert report["warnings"] == []
+    assert abs(_door_after_settling(out)) < 1.0

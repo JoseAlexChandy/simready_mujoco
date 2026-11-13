@@ -250,7 +250,7 @@ class _Ctx:
     mass_shapes: dict[str, trimesh.Trimesh] = field(default_factory=dict)  # collider -> body frame
     mesh_keys: dict[tuple, str] = field(default_factory=dict)
     decompose: str = "off"
-    decompose_only: set[str] | None = None  # mesh names to consider (None = all)
+    decompose_only: dict[str, int] | None = None  # mesh -> refinement level (None = all, level 0)
     decomposed: dict[str, list[str]] = field(default_factory=dict)  # mesh -> convex part meshes
 
     def world(self, prim: Usd.Prim) -> Gf.Matrix4d:
@@ -265,7 +265,7 @@ def parse_stage(
     name: str = "model",
     actuators: str = "auto",
     decompose: str = "off",
-    decompose_only: set[str] | None = None,
+    decompose_only: dict[str, int] | None = None,
 ) -> Model:
     """decompose: "concave" splits concave collision meshes into convex parts (CoACD), "all"
     splits every collision mesh, "off" keeps one convex hull per mesh. decompose_only limits
@@ -673,7 +673,8 @@ def _convex_parts(ctx: _Ctx, mesh_name: str) -> list[str]:
     names: list[str] = []
     if ctx.decompose == "all" or is_concave(md.vertices, md.faces):
         try:
-            parts = decompose(md.vertices, md.faces)
+            level = (ctx.decompose_only or {}).get(mesh_name, 0)
+            parts = decompose(md.vertices, md.faces, level)
         except ImportError:
             ctx.model.warnings.append(
                 f"{mesh_name}: concave collider kept as a solid hull (install coacd: pip install coacd)"
@@ -681,7 +682,9 @@ def _convex_parts(ctx: _Ctx, mesh_name: str) -> list[str]:
             parts = []
         for i, (pv, pf) in enumerate(parts):
             pname = ctx.names("mesh", f"{mesh_name}_cvx{i}")
-            ctx.model.meshes[pname] = MeshData(pname, pv.astype(np.float32), pf.astype(np.int32))
+            ctx.model.meshes[pname] = MeshData(
+                pname, pv.astype(np.float32), pf.astype(np.int32), source=mesh_name
+            )
             names.append(pname)
     ctx.decomposed[mesh_name] = names
     return names

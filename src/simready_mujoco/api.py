@@ -55,20 +55,7 @@ def convert(
 
         stage, _ = open_stage(usd_file, runtime=runtime, variants=variants)
         if decompose == "auto":
-            # Pass 1 without decomposition; find concave hulls that overlap other parts.
-            model = parse_stage(stage, name=usd_file.stem, actuators=actuators)
-            write_mjcf(model, out_dir)
-            overlapping = _overlapping_meshes(out_dir / f"{usd_file.stem}.xml", model)
-            if overlapping:
-                model = parse_stage(
-                    stage,
-                    name=usd_file.stem,
-                    actuators=actuators,
-                    decompose="concave",
-                    decompose_only=overlapping,
-                )
-                model.notes["overlapping_colliders"] = sorted(overlapping)
-                _clear_meshes(out_dir)
+            model = _auto_decompose(stage, usd_file.stem, actuators, out_dir)
         else:
             model = parse_stage(stage, name=usd_file.stem, actuators=actuators, decompose=decompose)
         if generate_collision:
@@ -117,9 +104,55 @@ def _write_report(model, out_dir: Path) -> None:
     (out_dir / "conversion_report.json").write_text(json.dumps(report, indent=2, default=str))
 
 
+def _auto_decompose(stage, name: str, actuators: str, out_dir: Path):
+    """Convert, then split concave colliders that overlap other parts at the authored pose.
+    Meshes still overlapping after a round are redone at a finer level (decompose.LEVELS)."""
+    from simready_mujoco.native import parse_stage, write_mjcf  # noqa: PLC0415
+    from simready_mujoco.native.decompose import LEVELS  # noqa: PLC0415
+
+    model = parse_stage(stage, name=name, actuators=actuators)
+    write_mjcf(model, out_dir)
+    overlapping = _overlapping_meshes(out_dir / f"{name}.xml", model)
+    if not overlapping:
+        return model
+    levels: dict[str, int] = {}
+    rounds = []
+    for level in range(len(LEVELS)):
+        for mesh in overlapping:
+            levels[mesh] = level if mesh not in levels else max(levels[mesh], level)
+        model = parse_stage(
+            stage, name=name, actuators=actuators, decompose="concave", decompose_only=dict(levels)
+        )
+        _clear_meshes(out_dir)
+        write_mjcf(model, out_dir)
+        still = _overlapping_meshes(out_dir / f"{name}.xml", model)
+        rounds.append({"level": level, **LEVELS[level], "still_overlapping": sorted(still)})
+        # only meshes that were decomposed can be refined further
+        decomposable = {m for m, parts in _parts_by_source(model).items() if parts}
+        overlapping = still & decomposable
+        if not overlapping:
+            break
+    model.notes["overlapping_colliders"] = sorted(levels)
+    model.notes["decomposition_rounds"] = rounds
+    if rounds[-1]["still_overlapping"]:
+        model.warnings.append(
+            "colliders still overlap after the finest decomposition: "
+            + ", ".join(rounds[-1]["still_overlapping"])
+        )
+    return model
+
+
+def _parts_by_source(model) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    for md in model.meshes.values():
+        if md.source:
+            out.setdefault(md.source, []).append(md.name)
+    return out
+
+
 def _overlapping_meshes(mjcf: Path, model) -> set[str]:
-    """Mesh names of collision geoms that penetrate another body's collider at the authored
-    pose (more than decompose.OVERLAP). Those are candidates for convex decomposition."""
+    """Source mesh names of collision geoms that penetrate another body's collider at the
+    authored pose (more than decompose.OVERLAP). Convex parts map back to their source."""
     import mujoco  # noqa: PLC0415
 
     from simready_mujoco.native.decompose import OVERLAP  # noqa: PLC0415
@@ -127,7 +160,14 @@ def _overlapping_meshes(mjcf: Path, model) -> set[str]:
     m = mujoco.MjModel.from_xml_path(str(mjcf))
     d = mujoco.MjData(m)
     mujoco.mj_forward(m, d)
-    geom_mesh = {g.name: g.mesh for b in model.bodies for g in b.geoms if g.collision and g.mesh}
+
+    def source(mesh: str) -> str:
+        md = model.meshes.get(mesh)
+        return md.source if md is not None and md.source else mesh
+
+    geom_mesh = {
+        g.name: source(g.mesh) for b in model.bodies for g in b.geoms if g.collision and g.mesh
+    }
     hits: set[str] = set()
     for c in d.contact[: d.ncon]:
         if c.dist < -OVERLAP:

@@ -64,3 +64,7 @@ MuJoCo pushes them out and both doors swing open (97° and −102° within 2 s).
 with SDF colliders. `--decompose auto` finds concave colliders that overlap other parts at the
 authored pose and splits them into convex parts (CoACD); reproduced and fixed on the synthetic
 `build_hollow_cabinet` fixture (door 63° open → 0°).
+
+On the real fridge the first round (tolerance 0.08, 19 parts) left two carcass pieces 24–35 mm
+inside the lockers, so one locker still swung open; `auto` now re-checks after each round and
+refines meshes that still overlap.
