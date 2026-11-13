@@ -692,7 +692,9 @@ def _shell_mass_properties(tm: trimesh.Trimesh) -> tuple[float, np.ndarray, np.n
         cap = float(tm.convex_hull.volume)
     except Exception:  # noqa: BLE001
         cap = math.inf
-    volume = min(total / 2.0 * SHELL_THICKNESS, cap)
+    volume = total / 2.0 * SHELL_THICKNESS
+    if cap > 1e-12:  # flat or degenerate hulls (a pane of glass) don't cap
+        volume = min(volume, cap)
     c = second * (volume / total) - volume * np.outer(com, com)  # about the COM
     inertia = np.trace(c) * np.eye(3) - c
     return volume, com, inertia
@@ -1043,11 +1045,19 @@ def _compute_inertials(ctx: _Ctx, bodies: list[str]) -> None:
             body.inertial = Inertial(MIN_MASS, diaginertia=(MIN_INERTIA,) * 3, source="default")
             continue
         diag_v = [d if math.isfinite(d) and d > 0 else MIN_INERTIA for d in diag_v]
+        com_v = [float(c) for c in com]
+        q = quat_tuple(axes)
+        if not all(math.isfinite(c) for c in [*com_v, *q]):
+            ctx.model.warnings.append(
+                f"{body.name}: mass computation gave a non-finite centre of mass or axes; "
+                "using the body origin"
+            )
+            com_v, q = [0.0, 0.0, 0.0], (1.0, 0.0, 0.0, 0.0)
         body.inertial = Inertial(
             mass=mass,
-            pos=tuple(float(c) * ctx.mpu for c in com),
+            pos=tuple(c * ctx.mpu for c in com_v),
             diaginertia=tuple(diag_v),
-            quat=quat_tuple(axes),
+            quat=q,
             source="authored" if authored else "computed",
         )
 

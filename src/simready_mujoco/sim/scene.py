@@ -398,8 +398,27 @@ def settle_check(m: mujoco.MjModel, items: list[Item], seconds: float) -> list[d
             and int(m.jnt_type[m.body_jntadr[b]]) == int(mujoco.mjtJoint.mjJNT_FREE)
         ):
             roots[name] = (b, d.xpos[b].copy())
+    from simready_mujoco.sim.health import BAD_STATE, _locate  # noqa: PLC0415
+
+    diverged = None
     for _ in range(int(seconds / m.opt.timestep)):
+        before = d.qacc.copy(), d.qvel.copy()
         mujoco.mj_step(m, d)
+        if any(d.warning[w].number for w in BAD_STATE):
+            diverged = _locate(m, d, before)
+            break
+    if diverged is not None:
+        culprit = diverged.body.split("/")[0]
+        return [
+            {
+                "body": diverged.body,
+                "drop_m": float("nan"),
+                "slide_m": float("nan"),
+                "final_z": float("nan"),
+                "ok": False,
+                "error": f"{diverged} (asset {culprit})",
+            }
+        ]
     out = []
     for name, (b, start) in roots.items():
         moved = d.xpos[b] - start

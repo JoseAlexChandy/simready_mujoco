@@ -332,6 +332,10 @@ def batch(
             str(len(r.get("warnings", []))) if "warnings" in r else "-",
         )
     console.print(t)
+    for r in results:
+        for w in r.get("warnings", []):
+            if w.startswith("UNSTABLE") or "mass properties" in w or "zero mass" in w:
+                console.print(f"[red]✗ {r['id']}: {w}[/]")
     licences = {r["id"]: r.get("license") for r in results if r.get("license")}
     if licences:
         console.print("Licences: " + ", ".join(f"{k}: {v}" for k, v in licences.items()))
@@ -539,6 +543,12 @@ def scene(
             "stay put (articulation: in the scene config)[/]"
         )
     for s in rep.settle:
+        if s.get("error"):
+            console.print(
+                f"  [red]✗ {s['error']}[/]\n    The scene was not checked. Run "
+                "`srmj batch configs/subset.yaml` and look at that asset's warnings."
+            )
+            continue
         mark = "[green]✓[/]" if s["ok"] else "[yellow]![/]"
         console.print(
             f"  {mark} {s['body']}: settled {s['drop_m'] * 1000:.0f} mm down, "

@@ -102,8 +102,23 @@ def convert(
                 f"add armature >= {s.armature_needed:.3g} on {s.joint}, or lower the timestep"
             )
         model.notes["stiff_drives"] = [s.to_dict() for s in stiff]
+        model.warnings.extend(_health_warnings(mjcf))
         _write_report(model, out_dir)
     return mjcf
+
+
+def _health_warnings(mjcf: Path) -> list[str]:
+    """Bad mass properties, and whether the asset alone diverges within a second."""
+    import mujoco  # noqa: PLC0415
+
+    from simready_mujoco.sim.health import first_divergence, mass_problems  # noqa: PLC0415
+
+    m = mujoco.MjModel.from_xml_path(str(mjcf))
+    out = mass_problems(m)
+    div = first_divergence(m, 1.0)
+    if div is not None:
+        out.append(f"UNSTABLE: {div}")
+    return out
 
 
 def _write_report(model, out_dir: Path) -> None:

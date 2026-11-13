@@ -5,6 +5,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [SemVer](ht
 ## [Unreleased]
 
 ### Added
+- Health checks: every converted asset is stepped on its own for 1 s. Divergence (NaN/Inf) and non-finite or zero mass properties are recorded as warnings naming the body, and `srmj batch` prints them in red. The scene settle check now fails and names the body when the simulation diverges: MuJoCo resets on NaN, which made a broken scene look settled ("-0 mm ✓" for everything).
 - **Articulation for one-piece assets**: an `articulation:` list on an asset in `configs/subset.yaml` turns named parts (doors, lids, baskets, buttons, knobs) into hinges or sliders with limits, optional spring-back and damping. They are authored as UsdPhysics joints on the session layer, and the mass is shared by volume. `srmj parts ID|all|FILE` lists parts with their size and position in the asset frame. See docs/articulation.md.
 - Viewer help now lists the lift (Ctrl + right-drag), slide-along-the-floor (Ctrl + Shift + right-drag) and twist controls.
 - Visual appearance: textures through UsdPreviewSurface → UsdUVTexture (and OmniPBR `diffuse_texture`/`diffuse_color_constant` as fallback), exported as PNG (≤2048 px) with UV-mapped OBJ meshes; meshes split per GeomSubset material (e.g. laptop: 15 materials on one mesh); roughness → shininess; meshes without UVs use the texture's mean colour. Previously only constant colours were read, so most SimReady objects rendered white.
