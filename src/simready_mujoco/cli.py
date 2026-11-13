@@ -459,6 +459,24 @@ def add(
         console.print(f"Next: [cyan]srmj batch {config} {only}[/] then [cyan]make scene[/]")
 
 
+@app.command(name="set")
+def set_cmd(
+    key: str = typer.Argument(..., help="Option, e.g. decompose, category, authored_mass"),
+    value: str = typer.Argument(..., help="Value (YAML), e.g. concave, object, keep"),
+    ids: list[str] = typer.Argument(..., help="Asset ids"),
+    config: Path = typer.Option(Path("configs/subset.yaml"), "--config", "-c", exists=True),
+) -> None:
+    """Set an option on assets in the batch config, e.g. `srmj set decompose concave d00270`."""
+    from simready_mujoco.add import set_option
+
+    done, missing = set_option(config, ids, key, yaml.safe_load(value))
+    if done:
+        console.print(f"[green]✓[/] {key}: {value} on {', '.join(done)}")
+    if missing:
+        console.print(f"[red]Not in {config}:[/] {', '.join(missing)}")
+        raise typer.Exit(1)
+
+
 @app.command()
 def scene(
     config: Path = typer.Argument(Path("configs/scene.yaml"), exists=True, help="Scene config"),
@@ -538,6 +556,10 @@ def scene(
             f"[dim]Robots/grippers left out (set robots: true in the scene config): "
             f"{', '.join(rep.skipped_robots)}[/]"
         )
+    if rep.nested:
+        console.print(f"[dim]{len(rep.nested)} items placed on/in other objects[/]")
+    for msg in rep.nesting_problems:
+        console.print(f"[yellow]! {msg}[/]")
     if rep.passive_motors:
         console.print(
             f"[dim]{len(rep.passive_motors)} object motors made drag-friendly "

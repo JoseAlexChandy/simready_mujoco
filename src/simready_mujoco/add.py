@@ -96,3 +96,42 @@ def add_to_config(config: Path, items: list[Found], category: str = "object") ->
             text += "\n"
         config.write_text(text + "\n".join(lines) + "\n")
     return added
+
+
+def set_option(config: Path, ids: list[str], key: str, value) -> tuple[list[str], list[str]]:
+    """Set `key: value` on the given asset entries, editing the text in place so comments
+    and layout are kept. Returns (ids changed, ids not found)."""
+    import re  # noqa: PLC0415
+
+    lines = config.read_text().splitlines()
+    rendered = yaml.safe_dump(value, default_flow_style=True).strip()
+    if rendered.endswith("..."):
+        rendered = rendered[:-3].strip()
+    done, missing = [], []
+    for aid in ids:
+        start = next(
+            (
+                i
+                for i, ln in enumerate(lines)
+                if re.fullmatch(rf"\s*- id:\s*{re.escape(aid)}\s*", ln)
+            ),
+            None,
+        )
+        if start is None:
+            missing.append(aid)
+            continue
+        indent = " " * (len(lines[start]) - len(lines[start].lstrip()) + 2)
+        end = start + 1
+        while end < len(lines) and (
+            lines[end].startswith(indent) and not lines[end].lstrip().startswith("- ")
+        ):
+            end += 1
+        for i in range(start + 1, end):
+            if re.match(rf"{indent}{re.escape(key)}\s*:", lines[i]):
+                lines[i] = f"{indent}{key}: {rendered}"
+                break
+        else:
+            lines.insert(end, f"{indent}{key}: {rendered}")
+        done.append(aid)
+    config.write_text("\n".join(lines) + "\n")
+    return done, missing

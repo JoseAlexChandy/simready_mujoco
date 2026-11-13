@@ -48,3 +48,24 @@ def test_add_appends_keeps_comments_and_skips_duplicates(tmp_path):
     assert text.startswith("# my assets")
     ids = [a["id"] for a in yaml.safe_load(text)["assets"]]
     assert ids == ["existing", "chair"]
+
+
+def test_set_option_edits_entries_in_place(tmp_path):
+    from simready_mujoco.add import set_option
+
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text(
+        "# keep me\nassets:\n"
+        "  - id: bowl\n    category: object\n    path: a.usd\n"
+        "  - id: plate\n    category: object\n    decompose: off\n    path: b.usd\n"
+    )
+    done, missing = set_option(cfg, ["bowl", "plate", "ghost"], "decompose", "concave")
+    assert done == ["bowl", "plate"] and missing == ["ghost"]
+    text = cfg.read_text()
+    assert text.startswith("# keep me")
+    import yaml
+
+    entries = {e["id"]: e for e in yaml.safe_load(text)["assets"]}
+    assert entries["bowl"]["decompose"] == "concave"
+    assert entries["plate"]["decompose"] == "concave"
+    assert entries["plate"]["path"] == "b.usd"

@@ -42,8 +42,39 @@ articulation:
   momentary_hz: 4.0
 
 # Per-asset overrides: floor | table | robot | skip | [x, y, z]
+# or on/in another asset: {in: ID, level: n, at: [x, y], upright: true, yaw: deg}
+# (see src/simready_mujoco/sim/nesting.py). Containers need hollow colliders:
+#   srmj set decompose concave <container ids>
 place:
   example_cabinet: skip      # synthetic test asset
+
+  # display shelf (d00326): bread basket on top, wicker baskets below
+  d00081: {on: d00326, level: 1}     # bread basket
+  d00323: {on: d00326, level: 2}     # round wicker basket
+  d00395: {on: d00326, level: 3}     # wicker basket with handle
+  d00363: {in: d00323}               # grapes
+  d00364: {in: d00323}               # guava
+  d00338: {in: d00395}               # ginger
+
+  # bowl (d00270): fruit
+  d00322: {in: d00270}               # apple
+  d00123: {in: d00270}               # cherry
+
+  # cutlery caddy (d00249): standing up, heavier end down
+  d00253: {in: d00249, upright: true}   # knife
+  d00247: {in: d00249, upright: true}   # fork
+  d00314: {in: d00249, upright: true}   # fork
+  d00315: {in: d00249, upright: true}   # carving fork
+  d00380: {in: d00249, upright: true}   # spoon
+  d00317: {in: d00249, upright: true}   # wooden spoon
+
+  # breakfast
+  d00080: {on: d00264}               # bread loaf on the cutting board
+  d00084: {on: d00264}               # bread roll on the cutting board
+  d00309: {on: d00268}               # croissant on the plate
+  d00287: {in: d00288}               # egg in the egg carton
+  d00199: {on: d00336}               # frying pan on the gas stove
+  d00248: {in: d00274}               # cutlery set in the drying rack
 
 # Optional rotation about the vertical axis, in degrees, per asset id
 yaw: {}

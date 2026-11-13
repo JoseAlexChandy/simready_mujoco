@@ -91,7 +91,7 @@ ROBOT_CATEGORIES = ("robot", "gripper")
 class Item:
     id: str
     mjcf: str
-    place: str = "auto"  # auto | floor | table | robot | skip | [x, y, z]
+    place: Any = "auto"  # auto | floor | table | robot | skip | [x, y, z] | {on/in: id, ...}
     category: str | None = None
     yaw_deg: float = 0.0
     # filled in by layout
@@ -99,6 +99,13 @@ class Item:
     bbox_max: tuple = (0.0, 0.0, 0.0)
     pos: tuple = (0.0, 0.0, 0.0)
     surface: str = ""
+    quat: tuple | None = None  # set for items placed on/in others; else yaw_deg is used
+
+    def frame_quat(self) -> tuple:
+        if self.quat is not None:
+            return tuple(float(c) for c in self.quat)
+        yaw = np.radians(self.yaw_deg)
+        return (float(np.cos(yaw / 2)), 0.0, 0.0, float(np.sin(yaw / 2)))
 
 
 @dataclass
@@ -113,6 +120,8 @@ class SceneReport:
     passive_motors: list[str] = field(default_factory=list)
     momentary_joints: list[str] = field(default_factory=list)
     held_joints: int = 0
+    nested: list[dict] = field(default_factory=list)
+    nesting_problems: list[str] = field(default_factory=list)
 
 
 def _bbox(m: mujoco.MjModel) -> tuple[np.ndarray, np.ndarray]:
@@ -540,11 +549,14 @@ def build_scene(
             if it.category in ROBOT_CATEGORIES and it.place == "auto":
                 it.place = "skip"
                 skipped_robots.append(it.id)
+    nested = [it for it in items if isinstance(it.place, dict)]
+    free = [it for it in items if not isinstance(it.place, dict)]
     if table.enabled:
-        placed, sheet = layout(items, table), None
+        placed, sheet = layout(free, table), None
     else:
         sheet = sheet or SheetSpec()
-        placed = layout_sheet(items, sheet)
+        placed = layout_sheet(free, sheet)
+    nested_report, problems = _place_nested(nested, placed)
     profile = get_profile(sim_profile)
     scene = _shell(profile, table, sheet)
 
@@ -566,10 +578,7 @@ def build_scene(
                 if dyn:
                     _grip(child, articulation.grip_friction)
             softened += _soften_articulation(child, articulation)
-            yaw = np.radians(it.yaw_deg)
-            frame = scene.worldbody.add_frame(
-                pos=list(it.pos), quat=[np.cos(yaw / 2), 0, 0, np.sin(yaw / 2)]
-            )
+            frame = scene.worldbody.add_frame(pos=list(it.pos), quat=list(it.frame_quat()))
             scene.attach(child, prefix=f"{it.id}/", frame=frame)
         model = scene.compile()
         out_file.write_text(_relative_mesh_paths(scene.to_xml(), out_file.parent))
@@ -578,11 +587,74 @@ def build_scene(
     report.sheet = asdict(sheet) if sheet else None
     report.skipped_robots = skipped_robots
     report.softened_joints = softened
+    report.nested = nested_report
+    report.nesting_problems = problems
     report.passive_motors = passive
     report.momentary_joints = momentary
     report.held_joints = held
     report.settle = settle_check(model, placed, settle_seconds)
     return report
+
+
+def _place_nested(nested: list[Item], placed: list[Item]) -> tuple[list[dict], list[str]]:
+    """Put items on/in their targets (in dependency order); appends them to `placed`."""
+    from simready_mujoco.sim.nesting import NestSpec, load_shape, place_on, spread  # noqa: PLC0415
+
+    specs = {it.id: NestSpec.parse(it.place) for it in nested}
+    shapes: dict[str, Any] = {}
+
+    def shape(it: Item):
+        if it.id not in shapes:
+            shapes[it.id] = load_shape(it.mjcf)
+        return shapes[it.id]
+
+    # spots for items sharing a target and level without an explicit `at`
+    groups: dict[tuple, list[str]] = {}
+    for it in nested:
+        sp = specs[it.id]
+        if sp.at is None:
+            groups.setdefault((sp.target, sp.level), []).append(it.id)
+    spots = {
+        aid: xy for ids in groups.values() for aid, xy in zip(ids, spread(len(ids)), strict=True)
+    }
+
+    by_id = {it.id: it for it in placed}
+    pending = list(nested)
+    report, problems = [], []
+    while pending:
+        progress = False
+        for it in list(pending):
+            sp = specs[it.id]
+            target = by_id.get(sp.target)
+            if target is None:
+                continue
+            pos, quat, note = place_on(
+                shape(it),
+                sp,
+                shape(target),
+                np.asarray(target.pos, float),
+                np.asarray(target.frame_quat(), float),
+                sp.at if sp.at is not None else spots[it.id],
+            )
+            it.pos, it.quat = tuple(float(v) for v in pos), tuple(float(v) for v in quat)
+            it.surface = f"{'in' if 'in' in it.place else 'on'} {sp.target}"
+            lo, hi = shape(it).lo, shape(it).hi
+            it.bbox_min, it.bbox_max = tuple(lo), tuple(hi)
+            placed.append(it)
+            by_id[it.id] = it
+            report.append({"id": it.id, "target": sp.target, "level": sp.level, "note": note})
+            if not note.startswith("surface"):
+                problems.append(f"{it.id} on {sp.target}: {note}")
+            pending.remove(it)
+            progress = True
+        if not progress:
+            for it in pending:
+                problems.append(
+                    f"{it.id}: target '{specs[it.id].target}' is not in the scene "
+                    "(skipped, not converted, or a loop)"
+                )
+            break
+    return report, problems
 
 
 def settle_check(m: mujoco.MjModel, items: list[Item], seconds: float) -> list[dict]:
