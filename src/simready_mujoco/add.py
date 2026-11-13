@@ -71,6 +71,16 @@ def find_assets(path: Path) -> tuple[list[Found], list[str]]:
     return found, problems
 
 
+def _portable(path: Path) -> str:
+    """Path as written to the config: relative to the working directory (the repo root,
+    where srmj is run) when it is inside it, so a clone on another machine still works."""
+    path = Path(path).resolve()
+    try:
+        return path.relative_to(Path.cwd().resolve()).as_posix()
+    except ValueError:
+        return str(path)
+
+
 def add_to_config(config: Path, items: list[Found], category: str = "object") -> list[str]:
     """Append items to the config's `assets:` list (text append keeps comments).
     Returns the ids added; existing ids and paths are skipped."""
@@ -87,7 +97,7 @@ def add_to_config(config: Path, items: list[Found], category: str = "object") ->
             aid, n = f"{it.id}_{n}", n + 1
         ids.add(aid)
         added.append(aid)
-        lines += [f"  - id: {aid}", f"    category: {category}", f"    path: {it.path}"]
+        lines += [f"  - id: {aid}", f"    category: {category}", f"    path: {_portable(it.path)}"]
     if lines:
         text = config.read_text()
         if "assets:" not in text:

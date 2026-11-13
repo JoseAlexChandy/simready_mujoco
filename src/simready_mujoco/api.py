@@ -10,7 +10,15 @@ from simready_mujoco.sim.profiles import apply_profile, get_profile
 from simready_mujoco.usd.inspect import InspectionReport, inspect_usd
 from simready_mujoco.usd.stage import open_stage
 
-__all__ = ["InspectionReport", "ModelSummary", "convert", "inspect_usd", "summarize_mjcf"]
+__all__ = [
+    "InspectionReport",
+    "ModelSummary",
+    "convert",
+    "inspect_usd",
+    "load_asset",
+    "place_asset",
+    "summarize_mjcf",
+]
 
 
 def convert(
@@ -234,3 +242,58 @@ def _clear_meshes(out_dir: Path) -> None:
     if mesh_dir.is_dir():
         for f in mesh_dir.iterdir():
             f.unlink()
+
+
+def load_asset(mjcf: str | Path):
+    """A converted asset as an MjSpec whose mesh and texture paths are absolute, so it can be
+    attached into any other model (relative `meshes/`, `textures/` paths would otherwise be
+    resolved against the other model's folder)."""
+    import mujoco  # noqa: PLC0415
+
+    from simready_mujoco.sim.scene import _absolute_meshes  # noqa: PLC0415
+
+    spec = mujoco.MjSpec.from_file(str(mjcf))
+    _absolute_meshes(spec, Path(mjcf))
+    return spec
+
+
+# Solver settings the converted assets are tuned for (contacts with elliptic friction cones,
+# implicit damping). attach() keeps the parent's, so place_asset adopts these when the
+# parent still has MuJoCo's defaults.
+_ASSET_OPTIONS = ("integrator", "cone", "impratio")
+
+
+def place_asset(
+    scene,
+    mjcf: str | Path,
+    pos=(0.0, 0.0, 0.0),
+    yaw_deg: float = 0.0,
+    prefix: str | None = None,
+    adopt_options: bool = True,
+):
+    """Attach a converted asset into `scene` (an mujoco.MjSpec) at `pos`, turned by `yaw_deg`
+    about the vertical. Names get `prefix` (default: the asset id, i.e. its output folder
+    name, + "/") so several assets can coexist. With `adopt_options`, solver settings the
+    scene leaves at MuJoCo's defaults take the asset's values. Returns the attached frame.
+
+        spec = mujoco.MjSpec.from_file("my_env.xml")
+        place_asset(spec, "outputs/d00270/d00270.xml", pos=(0.5, 0, 0.8))   # bowl on a table
+        model = spec.compile()
+    """
+    import math  # noqa: PLC0415
+
+    import mujoco  # noqa: PLC0415
+
+    child = load_asset(mjcf)
+    default = mujoco.MjSpec().option
+    for name in _ASSET_OPTIONS:
+        if adopt_options and getattr(scene.option, name) == getattr(default, name):
+            setattr(scene.option, name, getattr(child.option, name))
+        setattr(child.option, name, getattr(scene.option, name))  # the scene's wins; no warning
+    yaw = math.radians(yaw_deg)
+    frame = scene.worldbody.add_frame(
+        pos=list(pos), quat=[math.cos(yaw / 2), 0.0, 0.0, math.sin(yaw / 2)]
+    )
+    name = prefix if prefix is not None else f"{Path(mjcf).resolve().parent.name}/"
+    scene.attach(child, prefix=name, frame=frame)
+    return frame

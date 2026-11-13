@@ -5,6 +5,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [SemVer](ht
 ## [Unreleased]
 
 ### Added
+- README rewritten as a step-by-step guide for a fresh clone: install, convert one asset, convert many (zips or SimReady links), build the scene, viewer and keyboard controls, use the objects in your own MuJoCo environment, troubleshooting.
+- `place_asset(spec, mjcf, pos, yaw_deg)` / `load_asset(mjcf)`: put converted objects into your own MjSpec with mesh and texture paths fixed. Names are prefixed with the asset id, and the assets' solver settings are adopted when the environment keeps MuJoCo's defaults (no attach warnings).
+- `scripts/unpack.sh`: unzip downloaded asset archives into `data/`.
 - Scene: objects on or in other objects (`place: {in: ID}` / `{on: ID}`). An item rests on the first surface found looking straight down into the target's collision shape: a bowl's inside floor, a board, a shelf tier. `level: n` picks the n-th surface (shelf tiers), `at: [x, y]` a spot on the footprint, `upright: true` stands long items on end with the heavier end down, and `yaw` turns them. Several items in one container are spread over a grid, and chains work (fruit in a basket on a shelf). Problems are reported, and the settle check confirms everything comes to rest. `configs/scene.yaml` arranges Koyo's 40 new kitchen assets this way: baskets on the shelf, fruit in the bowl, cutlery in the caddy, a croissant on the plate, an egg in the carton, the pan on the stove.
 - `srmj set KEY VALUE IDS...`: set an option on assets in the batch config without hand-editing it (e.g. `srmj set decompose concave d00270`). Comments are kept.
 - `scripts/contact_sheet.py`: renders every converted asset into one labelled picture (id, size, mass), to identify numbered downloads.
@@ -37,6 +40,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [SemVer](ht
 - ADR 0003 (native backend semantics); docs/validation.md.
 
 ### Fixed (found on real SimReady assets)
+- `srmj add` wrote absolute paths (`/home/<user>/…`) into the config, which broke on any other machine. It now writes paths relative to the repo.
 - The cutlery set "in" the wire drying rack found no surface (the centre line passes between the wires), so it was dropped from the rack's top. Nearby lines are now tried (1 cm steps, up to 5 cm away). The settle check also records each object's tilt and flags `upright` items that fall over (more than 30°).
 - On/in placement in Koyo's kitchen: the round basket and its fruit were thrown up from the display shelf. Surfaces were found by casting down and restarting 2 cm below each hit, which on boards thicker than that found the underside of the top tier. Surfaces now come from exact solid spans (each convex collider is entered once from above and once from below; overlapping spans are merged), so board thickness doesn't matter. `in:` now means the container's floor (the lowest surface), so the ginger goes under the basket's handle instead of onto it, while `on:` still counts tiers from the top. `srmj scene` lists every placement with the surface heights found.
 - `make scene` was killed for running out of memory with 60 assets:

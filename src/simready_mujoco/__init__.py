@@ -2,6 +2,12 @@
 
 __version__ = "0.1.0"
 
-from simready_mujoco.api import convert, inspect_usd, summarize_mjcf  # noqa: E402
+from simready_mujoco.api import (  # noqa: E402
+    convert,
+    inspect_usd,
+    load_asset,
+    place_asset,
+    summarize_mjcf,
+)
 
-__all__ = ["__version__", "convert", "inspect_usd", "summarize_mjcf"]
+__all__ = ["__version__", "convert", "inspect_usd", "load_asset", "place_asset", "summarize_mjcf"]

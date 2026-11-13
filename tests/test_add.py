@@ -69,3 +69,17 @@ def test_set_option_edits_entries_in_place(tmp_path):
     assert entries["bowl"]["decompose"] == "concave"
     assert entries["plate"]["decompose"] == "concave"
     assert entries["plate"]["path"] == "b.usd"
+
+
+def test_added_paths_are_relative_to_the_repo(tmp_path, monkeypatch):
+    """A clone on another machine must still find the assets."""
+    from simready_mujoco.add import Found, add_to_config
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "data" / "x").mkdir(parents=True)
+    usd = tmp_path / "data" / "x" / "x.usda"
+    usd.write_text("#usda 1.0\n")
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text("assets:\n")
+    add_to_config(cfg, [Found("x", usd)])
+    assert "path: data/x/x.usda" in cfg.read_text()
