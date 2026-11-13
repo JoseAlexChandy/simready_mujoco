@@ -599,7 +599,7 @@ def scene(
         mark = "[green]✓[/]" if s["ok"] else "[yellow]![/]"
         console.print(
             f"  {mark} {s['body']}: settled {s['drop_m'] * 1000:.0f} mm down, "
-            f"slid {s['slide_m'] * 1000:.0f} mm"
+            f"slid {s['slide_m'] * 1000:.0f} mm" + (f" · {s['note']}" if s.get("note") else "")
         )
     console.print(f"View it: [cyan]srmj view {out_file}[/]")
     console.print(

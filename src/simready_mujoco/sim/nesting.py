@@ -157,6 +157,27 @@ def surfaces(shape: Shape, xy: np.ndarray) -> list[float]:
     return [hi for _, hi in solid_spans(shape, xy)]
 
 
+SEARCH_STEP, SEARCH_RADIUS = 0.01, 0.05  # m
+
+
+def _nearest_surface(shape: Shape, xy: np.ndarray) -> tuple[np.ndarray, list[float], float]:
+    """Look along nearby vertical lines (1 cm grid, up to 5 cm away, nearest first) for one
+    that meets the geometry. Returns (xy used, surfaces, distance moved)."""
+    n = int(SEARCH_RADIUS / SEARCH_STEP)
+    offsets = [
+        np.array([i, j]) * SEARCH_STEP
+        for i in range(-n, n + 1)
+        for j in range(-n, n + 1)
+        if (i or j) and math.hypot(i, j) * SEARCH_STEP <= SEARCH_RADIUS + 1e-9
+    ]
+    offsets.sort(key=lambda o: float(np.hypot(*o)))
+    for o in offsets:
+        found = surfaces(shape, xy + o)
+        if found:
+            return xy + o, found, float(np.hypot(*o))
+    return xy, [], 0.0
+
+
 def rotation(shape: Shape, spec: NestSpec) -> np.ndarray:
     """Quaternion (w, x, y, z): optionally stand the item on end, then turn it by yaw."""
     q = np.array([1.0, 0, 0, 0])
@@ -212,8 +233,12 @@ def place_on(
     centre = (target.lo + target.hi) / 2
     half = (target.hi - target.lo) / 2 * SPREAD
     xy = centre[:2] + np.array(at) * half[:2]
-    found = surfaces(target, xy)
-    heights = "/".join(f"{z:.2f}" for z in found)
+    found, moved = surfaces(target, xy), 0.0
+    if not found:  # open structures (a wire rack): the line can pass between the wires
+        xy, found, moved = _nearest_surface(target, xy)
+    heights = "/".join(f"{z:.2f}" for z in found) + (
+        f", {moved * 100:.0f} cm from the spot" if moved else ""
+    )
     if not found:
         z_local, note = target.hi[2], "no surface found; on top"
     elif spec.inside:

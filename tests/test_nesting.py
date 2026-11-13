@@ -62,6 +62,15 @@ BASKET = (
 )
 
 
+# wire rack: floor wires every 3 cm along x, none on the centre line
+RACK = f"""<mujoco model="rack"><worldbody><body name="rack" pos="0 0 0">
+  <freejoint/>
+  {"".join(f'<geom type="box" size="0.002 0.1 0.002" pos="{x:.3f} 0 0.01" {COL} mass="0.02"/>' for x in (-0.09, -0.06, -0.03, 0.03, 0.06, 0.09))}
+  <geom type="box" size="0.1 0.002 0.04" pos="0 0.1 0.04" {COL} mass="0.05"/>
+  <geom type="box" size="0.1 0.002 0.04" pos="0 -0.1 0.04" {COL} mass="0.05"/>
+</body></worldbody></mujoco>"""
+
+
 @pytest.fixture
 def assets(tmp_path):
     out = {}
@@ -72,6 +81,7 @@ def assets(tmp_path):
         ("knife", KNIFE),
         ("tshelf", THICK_SHELF),
         ("basket", BASKET),
+        ("rack", RACK),
     ):
         f = tmp_path / name / f"{name}.xml"
         f.parent.mkdir()
@@ -195,3 +205,31 @@ def test_in_goes_under_a_handle_to_the_floor(assets, tmp_path):
         tmp_path / "t" / "scene.xml",
     )
     assert on_top.nested[0]["note"].startswith("surface 1 (0.15")  # `on` = the handle's top
+
+
+def test_open_rack_finds_the_wires_next_to_the_spot(assets, tmp_path):
+    items = [Item("rack", assets["rack"]), Item("apple", assets["apple"], place={"in": "rack"})]
+    rep = build_scene(items, tmp_path / "s" / "scene.xml")
+    note = rep.nested[0]["note"]
+    assert note.startswith("floor (0.01") and "cm from the spot" in note
+    assert not rep.nesting_problems and all(s["ok"] for s in rep.settle)
+
+
+def test_upright_item_that_falls_over_is_flagged():
+    """A pen stood on end, 10 deg off vertical, falls; the settle check says so."""
+    from simready_mujoco.sim.scene import settle_check
+
+    xml = f"""<mujoco><worldbody><geom type="plane" size="1 1 0.1"/>
+      <body name="pen/root" pos="0 0 0.16" euler="10 0 0"><freejoint/>
+        <geom type="capsule" size="0.005 0.15" {COL} mass="0.02"/></body>
+      <body name="cup/root" pos="0.5 0 0.05"><freejoint/>
+        <geom type="box" size="0.05 0.05 0.05" {COL} mass="0.2"/></body>
+    </worldbody></mujoco>"""
+    m = mujoco.MjModel.from_xml_string(xml)
+    items = [
+        Item("pen", "-", place={"in": "cup", "upright": True}),
+        Item("cup", "-"),
+    ]
+    out = {s["body"]: s for s in settle_check(m, items, 2.0)}
+    assert not out["pen/root"]["ok"] and "fell over" in out["pen/root"]["note"]
+    assert out["cup/root"]["ok"] and out["cup/root"]["tilt_deg"] < 1

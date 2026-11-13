@@ -752,7 +752,7 @@ def settle_check(m: mujoco.MjModel, items: list[Item], seconds: float) -> list[d
             and m.body_jntnum[b]
             and int(m.jnt_type[m.body_jntadr[b]]) == int(mujoco.mjtJoint.mjJNT_FREE)
         ):
-            roots[name] = (b, d.xpos[b].copy())
+            roots[name] = (b, d.xpos[b].copy(), d.xmat[b].reshape(3, 3).copy())
     from simready_mujoco.sim.health import BAD_STATE, _locate  # noqa: PLC0415
 
     diverged = None
@@ -774,16 +774,24 @@ def settle_check(m: mujoco.MjModel, items: list[Item], seconds: float) -> list[d
                 "error": f"{diverged} (asset {culprit})",
             }
         ]
+    upright = {
+        it.id for it in items if isinstance(it.place, dict) and bool(it.place.get("upright", False))
+    }
     out = []
-    for name, (b, start) in roots.items():
+    for name, (b, start, R0) in roots.items():
         moved = d.xpos[b] - start
-        out.append(
-            {
-                "body": name,
-                "drop_m": float(-moved[2]),
-                "slide_m": float(np.linalg.norm(moved[:2])),
-                "final_z": float(d.xpos[b][2]),
-                "ok": bool(abs(moved[2]) < 0.05 and np.linalg.norm(moved[:2]) < 0.1),
-            }
-        )
+        R = d.xmat[b].reshape(3, 3) @ R0.T  # rotation since the start
+        tilt = float(np.degrees(np.arccos(np.clip(R[2, 2], -1.0, 1.0))))  # world z turned
+        entry = {
+            "body": name,
+            "drop_m": float(-moved[2]),
+            "slide_m": float(np.linalg.norm(moved[:2])),
+            "final_z": float(d.xpos[b][2]),
+            "tilt_deg": tilt,
+            "ok": bool(abs(moved[2]) < 0.05 and np.linalg.norm(moved[:2]) < 0.1),
+        }
+        if name.split("/")[0] in upright and tilt > 30:
+            entry["ok"] = False
+            entry["note"] = f"placed upright but fell over ({tilt:.0f} deg)"
+        out.append(entry)
     return out

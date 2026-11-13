@@ -37,6 +37,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [SemVer](ht
 - ADR 0003 (native backend semantics); docs/validation.md.
 
 ### Fixed (found on real SimReady assets)
+- The cutlery set "in" the wire drying rack found no surface (the centre line passes between the wires), so it was dropped from the rack's top. Nearby lines are now tried (1 cm steps, up to 5 cm away). The settle check also records each object's tilt and flags `upright` items that fall over (more than 30°).
 - On/in placement in Koyo's kitchen: the round basket and its fruit were thrown up from the display shelf. Surfaces were found by casting down and restarting 2 cm below each hit, which on boards thicker than that found the underside of the top tier. Surfaces now come from exact solid spans (each convex collider is entered once from above and once from below; overlapping spans are merged), so board thickness doesn't matter. `in:` now means the container's floor (the lowest surface), so the ginger goes under the basket's handle instead of onto it, while `on:` still counts tiers from the top. `srmj scene` lists every placement with the surface heights found.
 - `make scene` was killed for running out of memory with 60 assets:
   - **Compiled once.** The scene was compiled twice (`compile()`, then `to_xml()`), so two full copies of every mesh and texture were held at once. It is now compiled once, written, released, and loaded once for the settle check.
