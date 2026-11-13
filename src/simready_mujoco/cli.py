@@ -540,9 +540,9 @@ def scene(
         )
     if rep.passive_motors:
         console.print(
-            f"[dim]{len(rep.passive_motors)} object motors switched off so their parts can be "
-            f"dragged ({', '.join(rep.passive_motors)}); `motors: keep` under articulation: "
-            "in the scene config keeps them[/]"
+            f"[dim]{len(rep.passive_motors)} object motors made drag-friendly "
+            f"({', '.join(rep.passive_motors)}): Control panel sliders move them, and a drag "
+            "overpowers them (articulation: motors: in the scene config)[/]"
         )
     if rep.momentary_joints:
         console.print(

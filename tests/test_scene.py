@@ -3,6 +3,7 @@
 import os
 
 import mujoco
+import numpy as np
 import pytest
 from build import build_cabinet, build_mimic_gripper, build_runtime_variant_asset
 
@@ -142,18 +143,60 @@ def gadget(tmp_path):
     return f
 
 
-def test_object_motor_off_so_lid_stays_where_left(gadget, tmp_path):
+def test_slider_drives_lid_and_a_drag_overpowers_it(gadget, tmp_path):
     rep = build_scene([Item("g", str(gadget), category="object")], tmp_path / "s" / "scene.xml")
     assert rep.passive_motors == ["g/lid_motor"]
+    m = mujoco.MjModel.from_xml_path(rep.scene)
+    d = mujoco.MjData(m)
+    lid, base = m.joint("g/lid_hinge"), m.body("g/housing")
+    q = lambda: float(d.qpos[lid.qposadr[0]])  # noqa: E731
+
+    def run(seconds):
+        for _ in range(int(seconds / m.opt.timestep)):
+            mujoco.mj_step(m, d)
+
+    run(0.5)
+    start = d.xpos[base.id].copy()
+    d.ctrl[m.actuator("g/lid_motor").id] = 1.0  # Control panel slider
+    run(2.0)
+    assert q() == pytest.approx(1.0, abs=0.05)
+
+    # a hand pulling the lid shut (like a viewer drag) beats the capped motor ...
+    d.xfrc_applied[m.body("g/lid").id] = [0, 0, -20, 0, 0, 0]
+    run(1.0)
+    assert q() < 0.3
+    # ... without shoving the whole gadget across the floor
+    assert np.linalg.norm(d.xpos[base.id][:2] - start[:2]) < 0.005
+    d.xfrc_applied[:] = 0
+    run(2.0)
+    assert q() == pytest.approx(1.0, abs=0.05)  # back to where the slider says
+
+
+def test_passive_motors_lid_stays_where_left(gadget, tmp_path):
+    rep = build_scene(
+        [Item("g", str(gadget), category="object")],
+        tmp_path / "s" / "scene.xml",
+        articulation=ArticulationSpec(motors="passive"),
+    )
     assert _drag_and_release(rep, "g/lid_hinge", 1.0) == pytest.approx(1.0, abs=0.1)
 
+
+def test_motors_keep_pull_lid_back(gadget, tmp_path):
     kept = build_scene(
         [Item("g", str(gadget), category="object")],
         tmp_path / "k" / "scene.xml",
         articulation=ArticulationSpec(motors="keep"),
     )
     assert kept.passive_motors == []
-    assert _drag_and_release(kept, "g/lid_hinge", 1.0) < 0.2  # the motor pulls it shut
+    assert _drag_and_release(kept, "g/lid_hinge", 1.0) < 0.2
+
+
+def test_objects_with_moving_parts_grip_the_floor(gadget, tmp_path):
+    rep = build_scene([Item("g", str(gadget), category="object")], tmp_path / "s" / "scene.xml")
+    m = mujoco.MjModel.from_xml_path(rep.scene)
+    housing = m.body("g/housing").id
+    geoms = [g for g in range(m.ngeom) if m.geom_bodyid[g] == housing]
+    assert all(m.geom_friction[g][0] >= 1.5 for g in geoms)
 
 
 def test_button_springs_back(gadget, tmp_path):

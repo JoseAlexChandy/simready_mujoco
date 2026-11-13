@@ -95,10 +95,11 @@ still drive them. Robots and grippers are never changed. All of it is set under
 
 | setting | default | effect |
 |---|---|---|
-| `motors` | `passive` | Object motors (laptop lid, microwave door, air-fryer basket) produce no force, so a dragged part stays put. Their damping is kept. `keep` leaves the motors on. |
+| `motors` | `compliant` | Object motors (laptop lid, microwave door, air-fryer basket) follow the Control panel sliders, with force capped at `motor_force_factor` (2.5) x what moves the part against its weight, so a drag overpowers them. Let go and the part returns to the slider's position. `passive`: motors off, dragged parts stay put. `keep`: as converted. |
+| `grip_friction` | `1.5` | Floor friction for objects with moving parts, so opening a door doesn't slide the object. They can still be lifted. `0` keeps the asset's own friction. |
 | `momentary` | `true` | Buttons, triggers and switches (slides up to 15 mm, hinges up to 10°) spring back when let go. |
 | `momentary_hz` | `4.0` | How quickly they spring back. |
 | `hold_factor` | `1.3` | Friction relative to the part's own gravity torque, so lids and flaps stay at any angle. Vertical door hinges and level drawers get none. `0` turns this off. |
 | `damping`, `frictionloss` | `0.5`, `0.05` | Light damping and friction for every other joint. |
 
-`srmj scene` lists which motors were switched off and which joints became momentary.
+`srmj scene` lists the motors it adjusted and the joints that became momentary.

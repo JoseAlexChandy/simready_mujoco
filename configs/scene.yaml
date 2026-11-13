@@ -29,10 +29,13 @@ articulation:
   enabled: true
   damping: 0.5        # N·m·s/rad for hinges, N·s/m for sliders
   frictionloss: 0.05
-  # Objects' motors (laptop lid, microwave door, air-fryer basket) hold their joint at a
-  # target, so a dragged part springs back. passive: switch them off in the scene (their
-  # damping is kept); keep: leave them on. Robots and grippers always keep theirs.
-  motors: passive
+  # Objects' motors (laptop lid, microwave door, air-fryer basket). compliant: the Control
+  # panel sliders move them, but their force is capped so a drag overpowers them (let go and
+  # the part returns to the slider). passive: motors off, dragged parts stay put. keep: as
+  # converted. Robots and grippers always keep theirs.
+  motors: compliant
+  # Objects with moving parts grip the floor harder, so opening a door doesn't slide them.
+  grip_friction: 1.5
   # Buttons, triggers and switches (slides up to 15 mm, hinges up to 10 deg) spring back
   # to rest when let go.
   momentary: true
