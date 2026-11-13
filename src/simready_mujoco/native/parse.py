@@ -311,7 +311,7 @@ def parse_stage(
         decomposed_meshes={k: len(v) for k, v in ctx.decomposed.items() if v},
         mass_from={
             src: sum(t.metadata.get("mass_source") == src for t in ctx.mass_shapes.values())
-            for src in ("mesh", "hull")
+            for src in ("mesh", "shell", "hull")
         },
         inertial_sources={
             s: sum(b.inertial is not None and b.inertial.source == s for b in m.bodies)
@@ -641,28 +641,61 @@ def _geom_from_prim(
     return g, tm
 
 
-def _mass_shape(vertices, faces) -> trimesh.Trimesh | None:
-    """Solid used for a collider's mass, centre of mass and inertia.
+SHELL_THICKNESS = 0.003  # m, wall thickness assumed for open meshes (see _mass_shape)
 
-    MuJoCo collides with the convex hull, but a hull is a poor mass model for hollow or
-    hooked shapes: a mug's hull fills the cup and the gap under the handle, which makes it
-    several times too heavy and drags its centre of mass toward the handle until it tips over.
-    When the mesh is closed (watertight after welding seam vertices) its own volume is used;
-    otherwise the hull is the best available estimate."""
+
+def _mass_shape(vertices, faces) -> trimesh.Trimesh | None:
+    """Mesh used for a collider's mass, centre of mass and inertia (body frame after the
+    caller's transform). metadata["mass_source"] says how it is to be read:
+
+    - "mesh": the mesh is closed (after welding seams and filling small holes), so its own
+      volume is the solid.
+    - "shell": the mesh is open. Its mass is spread over the surface as a wall
+      SHELL_THICKNESS thick (both faces of a modelled wall count as one, so area / 2), capped at
+      the hull's volume. That puts the centre of mass where the material is, for any shape.
+
+    The convex hull is never used for mass. MuJoCo collides with it, but it fills hollow and
+    hooked shapes: a mug's hull fills the cup and the gap under its handle, which made it
+    several times too heavy, with its centre of mass beyond its base, so it tipped over."""
     try:
         full = trimesh.Trimesh(vertices, faces, process=True)
-        full.merge_vertices()
+        full.merge_vertices(merge_tex=True, merge_norm=True, digits_vertex=5)  # 10 um welds
+        if not full.is_watertight:
+            trimesh.repair.fill_holes(full)
         if full.is_watertight and full.is_winding_consistent:
             if full.volume < 0:
                 full.invert()
             if full.volume > 1e-12:
                 full.metadata["mass_source"] = "mesh"
                 return full
-        hull = trimesh.Trimesh(vertices, faces, process=False).convex_hull
-        hull.metadata["mass_source"] = "hull"
-        return hull
+        shell = trimesh.Trimesh(vertices, faces, process=False)
+        if shell.area <= 0:
+            return None
+        shell.metadata["mass_source"] = "shell"
+        return shell
     except Exception:  # noqa: BLE001  (degenerate / flat meshes)
         return None
+
+
+def _shell_mass_properties(tm: trimesh.Trimesh) -> tuple[float, np.ndarray, np.ndarray]:
+    """(volume at unit density, centre of mass, inertia about it) for an open mesh read as a
+    thin wall. Per triangle (a, b, c), area A: integral of x x^T = A/12 (sum v v^T + s s^T),
+    with s = a + b + c."""
+    tri = np.asarray(tm.triangles, dtype=float)
+    area = np.asarray(tm.area_faces, dtype=float)
+    total = float(area.sum())
+    sums = tri.sum(axis=1)
+    com = (area[:, None] * sums / 3.0).sum(axis=0) / total
+    second = np.einsum("i,ijk,ijl->kl", area, tri, tri) + np.einsum("i,ik,il->kl", area, sums, sums)
+    second /= 12.0
+    try:
+        cap = float(tm.convex_hull.volume)
+    except Exception:  # noqa: BLE001
+        cap = math.inf
+    volume = min(total / 2.0 * SHELL_THICKNESS, cap)
+    c = second * (volume / total) - volume * np.outer(com, com)  # about the COM
+    inertia = np.trace(c) * np.eye(3) - c
+    return volume, com, inertia
 
 
 def _collect_colliders(ctx: _Ctx, parsed, bodies: list[str]) -> dict[str, str]:
@@ -697,11 +730,11 @@ def _collect_colliders(ctx: _Ctx, parsed, bodies: list[str]) -> dict[str, str]:
                 if parts:
                     geoms, part_tm = _part_geoms(ctx, g, parts)
                     # the union of part hulls beats one hull, but not the closed mesh itself
-                    if tm is None or tm.metadata.get("mass_source") != "mesh":
+                    if tm is None:
                         tm = part_tm
                         if tm is not None:
                             tm.metadata["mass_source"] = "hull"
-            if tm is not None and tm.volume > 1e-12:
+            if tm is not None and (tm.metadata.get("mass_source") == "shell" or tm.volume > 1e-12):
                 ctx.mass_shapes[path] = tm
             for geom in geoms:
                 _attach(ctx, owner, geom)
@@ -979,10 +1012,14 @@ def _compute_inertials(ctx: _Ctx, bodies: list[str]) -> None:
             return mi
         # Values in stage units, unit density, inertia about the shape's own COM.
         inv = 1.0 / ctx.mpu
-        tm.density = 1.0
-        mi.volume = float(tm.volume) * inv**3
-        mi.centerOfMass = Gf.Vec3f(*(tm.center_mass * inv))
-        mi.inertia = Gf.Matrix3f(*(np.asarray(tm.moment_inertia) * inv**5).flatten().tolist())
+        if tm.metadata.get("mass_source") == "shell":
+            volume, com, inertia = _shell_mass_properties(tm)
+        else:
+            tm.density = 1.0
+            volume, com, inertia = float(tm.volume), tm.center_mass, tm.moment_inertia
+        mi.volume = float(volume) * inv**3
+        mi.centerOfMass = Gf.Vec3f(*(np.asarray(com) * inv))
+        mi.inertia = Gf.Matrix3f(*(np.asarray(inertia) * inv**5).flatten().tolist())
         return mi
 
     for b in bodies:
